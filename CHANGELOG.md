@@ -1,3 +1,15 @@
+# 1.0.0 (2026-08-24)
+
+
+### Bug Fixes
+
+* 优化QQ音乐进程检测，解决缓慢或假死问题 ([1e69b7e](https://github.com/yc004/QQKWKG-TriMusicDecrypt-mac/commit/1e69b7ef56ca6ff81cfd38fe9a9f7151f7d136dd))
+
+
+### Features
+
+* add verified macOS UI support ([aaa5a0f](https://github.com/yc004/QQKWKG-TriMusicDecrypt-mac/commit/aaa5a0f5c40058a87914f7cd4cd95e7571677b56))
+
 # Changelog
 
 All notable changes to this project will be documented in this file.

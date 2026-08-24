@@ -8,6 +8,7 @@ import json
 import lzma
 import os
 import pathlib
+import platform
 import sqlite3
 import struct
 import tempfile
@@ -22,13 +23,13 @@ except Exception:  # pragma: no cover - optional acceleration
     np = None
 
 from src.Infrastructure.native_backend import NativeBackendError, get_native_backend
-from src.Infrastructure.runtime_paths import RuntimePaths
+from src.Infrastructure.runtime_paths import RuntimePaths, appdata_path
 from src.Infrastructure.transcoder import probe_audio_container
 
 PATHS = RuntimePaths.discover()
 DEFAULT_KEY_PATH = PATHS.assets_dir / "kugou_key.xz"
 DEFAULT_OUTPUT_DIR = PATHS.output_dir
-DEFAULT_KGG_DB_PATH = pathlib.Path(os.environ.get("APPDATA", "")) / "KuGou8" / "KGMusicV3.db"
+DEFAULT_KGG_DB_PATH = (appdata_path() or pathlib.Path()) / "KuGou8" / "KGMusicV3.db"
 
 HEADER_LEN = 1024
 KGM_MAGIC = bytes([
@@ -251,7 +252,7 @@ class RC4Cipher(StreamCipher):
             data[processed:] = chunk
 
 
-class _AesCbcNoPadding:
+class _WindowsAesCbcNoPadding:
     def __init__(self) -> None:
         self.bcrypt = ctypes.WinDLL("bcrypt")
         self.alg_handle = ctypes.c_void_p()
@@ -349,7 +350,36 @@ class _AesCbcNoPadding:
             self.alg_handle = ctypes.c_void_p()
 
 
-_AES_CBC = _AesCbcNoPadding()
+class _PortableAesCbcNoPadding:
+    """AES-CBC adapter used off Windows; the decrypt algorithm is unchanged."""
+
+    block_length = 16
+
+    def decrypt(self, buffer: bytes | bytearray, key: bytes, iv: bytes) -> bytes:
+        if len(key) != 16:
+            raise DecodeError(f"invalid AES key size: {len(key)}")
+        if len(iv) != self.block_length:
+            raise DecodeError(f"invalid AES IV size: {len(iv)}")
+        if len(buffer) % self.block_length != 0:
+            raise DecodeError("AES CBC buffer must align to block size")
+        try:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        except ImportError as exc:  # pragma: no cover - packaging dependency check
+            raise DecodeError("cryptography is required for AES on this platform") from exc
+        decryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
+        return decryptor.update(bytes(buffer)) + decryptor.finalize()
+
+    def close(self) -> None:
+        return None
+
+
+def _create_aes_cbc_backend() -> _WindowsAesCbcNoPadding | _PortableAesCbcNoPadding:
+    if platform.system() == "Windows":
+        return _WindowsAesCbcNoPadding()
+    return _PortableAesCbcNoPadding()
+
+
+_AES_CBC = _create_aes_cbc_backend()
 
 
 def _rotate_byte(value: int, bits: int) -> int:

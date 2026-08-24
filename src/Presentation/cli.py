@@ -4,6 +4,7 @@ import argparse
 import ctypes
 import json
 import pathlib
+import platform
 import sys
 from typing import Any, Callable
 
@@ -40,6 +41,10 @@ PLATFORM_LABELS = {"qq": "QQ音乐", "kuwo": "酷我音乐", "kugou": "酷狗音
 
 
 def is_running_as_admin() -> bool:
+    if platform.system() != "Windows":
+        # Runtime process attachment on macOS is controlled by privacy/debug
+        # permissions rather than Windows elevation.
+        return True
     try:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except Exception:
@@ -586,7 +591,6 @@ def main(argv: list[str] | None = None) -> int:
     config[platform_id].update(settings)
     recursive = not args.no_recursive
     return _run_platform(platform_id, config, input_override=args.input, output_override=args.output, recursive_override=recursive, interactive=False)
-
 
 
 

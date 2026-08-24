@@ -4,6 +4,13 @@ import pathlib
 import time
 from dataclasses import dataclass, field
 
+try:
+    import imghdr as _imghdr  # noqa: F401  # removed from Python 3.13
+except ModuleNotFoundError:
+    from src.Infrastructure.imghdr_compat import install as _install_imghdr_compat
+
+    _install_imghdr_compat()
+
 from ncmdump import NeteaseCloudMusicFile
 
 from src.Infrastructure.transcoder import detect_audio_container

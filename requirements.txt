@@ -1,0 +1,7 @@
+cryptography
+frida
+mutagen
+ncmdump-py
+numpy
+PySide6
+PySide6-Fluent-Widgets

@@ -4,6 +4,8 @@ import base64
 import json
 import os
 import pathlib
+import platform
+import shutil
 import subprocess
 import tempfile
 import time
@@ -47,7 +49,8 @@ def normalize_target_format(value: str) -> str:
 def resolve_ffmpeg_path(paths: RuntimePaths | None = None) -> pathlib.Path | None:
     paths = paths or RuntimePaths.discover()
     candidates: list[pathlib.Path] = []
-    for pattern in ("ffmpeg*.exe", "ffmpeg.exe"):
+    patterns = ("ffmpeg", "ffmpeg-mac-*", "ffmpeg-darwin-*") if platform.system() == "Darwin" else ("ffmpeg*.exe", "ffmpeg.exe")
+    for pattern in patterns:
         candidates.extend(sorted(paths.assets_dir.glob(pattern)))
         candidates.extend(sorted((paths.bundle_dir / "assets").glob(pattern)))
         candidates.extend(sorted((paths.root_dir / "assets").glob(pattern)))
@@ -59,6 +62,9 @@ def resolve_ffmpeg_path(paths: RuntimePaths | None = None) -> pathlib.Path | Non
         seen.add(key)
         if candidate.exists() and candidate.is_file():
             return candidate
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return pathlib.Path(system_ffmpeg).resolve()
     return None
 
 
@@ -93,7 +99,7 @@ def probe_audio_container(input_path: pathlib.Path) -> str | None:
         str(input_path),
         "-f",
         "null",
-        "NUL",
+        os.devnull,
     ]
     completed = subprocess.run(
         command,
@@ -524,5 +530,3 @@ def attach_cover(input_path: pathlib.Path, output_path: pathlib.Path, cover_path
                 temp_output.unlink()
             except OSError:
                 pass
-
-

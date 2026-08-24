@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import pathlib
+import platform
 from functools import lru_cache
 
 from src.Infrastructure.runtime_paths import RuntimePaths
@@ -13,6 +14,7 @@ class NativeBackendError(RuntimeError):
 
 class NativeKudogBackend:
     def __init__(self, dll_path: pathlib.Path | None) -> None:
+        # Keep the public attribute for compatibility with existing reports.
         self.dll_path = dll_path
         self.available = False
         self.reason = "dll_not_found"
@@ -116,11 +118,16 @@ class NativeKudogBackend:
 
 
 def resolve_native_dll(paths: RuntimePaths) -> pathlib.Path | None:
+    if platform.system() == "Darwin":
+        library_names = ("libkudog_native.dylib", "kudog_native.dylib")
+    elif platform.system() == "Linux":
+        library_names = ("libkudog_native.so", "kudog_native.so")
+    else:
+        library_names = ("kudog_native.dll",)
     candidates = [
-        paths.assets_dir / "kudog_native.dll",
-        paths.root_dir / "kudog_native.dll",
-        pathlib.Path.cwd() / "assets" / "kudog_native.dll",
-        pathlib.Path.cwd() / "kudog_native.dll",
+        base / name
+        for name in library_names
+        for base in (paths.assets_dir, paths.root_dir, pathlib.Path.cwd() / "assets", pathlib.Path.cwd())
     ]
     for candidate in candidates:
         if candidate.exists() and candidate.is_file():

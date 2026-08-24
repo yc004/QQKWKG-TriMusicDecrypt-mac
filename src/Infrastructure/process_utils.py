@@ -1,6 +1,9 @@
 ﻿from __future__ import annotations
 
 import json
+import os
+import pathlib
+import platform
 import subprocess
 from dataclasses import dataclass
 from typing import Any
@@ -55,6 +58,8 @@ def _run_powershell_json(script: str) -> list[dict[str, Any]]:
 
 
 def _query_processes(filter_script: str) -> list[ProcessMatch]:
+    if platform.system() != "Windows":
+        return _query_posix_processes()
     script = (
         "$ErrorActionPreference='SilentlyContinue'; "
         f"$procs = {filter_script}; "
@@ -81,6 +86,37 @@ def _query_processes(filter_script: str) -> list[ProcessMatch]:
     return matches
 
 
+def _query_posix_processes() -> list[ProcessMatch]:
+    """Return the same process model as the Windows PowerShell adapter."""
+    try:
+        completed = subprocess.run(
+            ["ps", "-axo", "pid=,comm="],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=6,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if completed.returncode != 0:
+        return []
+    matches: list[ProcessMatch] = []
+    for line in completed.stdout.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        executable = parts[1].strip()
+        name = pathlib.Path(executable).name
+        matches.append(ProcessMatch(pid=pid, name=name, exe_path=executable if os.path.isabs(executable) else ""))
+    return matches
+
+
 def find_process_by_substring(fragment: str) -> ProcessMatch | None:
     value = (fragment or "").strip().lower()
     if not value:
@@ -95,6 +131,11 @@ def find_process_by_name(process_name: str) -> ProcessMatch | None:
     target = (process_name or "").strip().lower()
     if not target:
         return None
+    if platform.system() != "Windows":
+        normalized_target = target[:-4] if target.endswith(".exe") else target
+        results = _query_posix_processes()
+        exact = [item for item in results if item.name.lower() in {target, normalized_target}]
+        return exact[-1] if exact else None
     if target.endswith(".exe"):
         query_name = target[:-4]
     else:

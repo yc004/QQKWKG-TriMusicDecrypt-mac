@@ -2,6 +2,7 @@
 
 import logging
 import pathlib
+import platform
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -51,14 +52,16 @@ class QQPlatformAdapter:
             pass
 
     def requires_running_process(self) -> bool:
-        return True
+        return platform.system() == 'Windows'
 
     def validate_runtime(self, settings: dict) -> tuple[bool, str | None]:
+        if platform.system() != 'Windows':
+            return True, None
         process_match = str(settings.get('process_match', 'qqmusic') or 'qqmusic')
         info = find_process_by_name('QQMusic.exe')
         if info is None:
             info = find_process_by_substring(process_match)
-        return (info is not None, None if info is not None else 'QQ?????')
+        return (info is not None, None if info is not None else '请先启动 QQ 音乐')
 
     def collect_files(self, input_path: pathlib.Path, recursive: bool) -> list[pathlib.Path]:
         if input_path.is_file():
@@ -89,17 +92,32 @@ class QQPlatformAdapter:
 
     def decrypt_one(self, input_path: pathlib.Path, work_dir: pathlib.Path, settings: dict, *, log_dir: pathlib.Path) -> dict:
         started = time.perf_counter()
+        source_suffix = input_path.suffix.lower().lstrip('.')
+        default_ext = RAW_CONTAINER_RULES.get(source_suffix, 'flac')
+        final_work_path = work_dir / f"{input_path.stem}.{default_ext}"
+
+        if platform.system() != 'Windows':
+            from src.Infrastructure.platforms.qq.offline_decoder import decode_file
+
+            detail = decode_file(input_path, final_work_path, fetch_musicex_ekey=True)
+            elapsed = round(time.perf_counter() - started, 6)
+            detail['timing'] = {
+                'header_parse_sec': 0.0,
+                'key_material_sec': 0.0,
+                'stream_decode_sec': elapsed,
+                'publish_sec': 0.0,
+                'total_sec': elapsed,
+            }
+            return detail
+
         FridaDecryptGateway, pick_safe_tmp_dir = self._load_runtime()
         if self._gateway is None:
             self._gateway = FridaDecryptGateway()
 
-        source_suffix = input_path.suffix.lower().lstrip('.')
-        default_ext = RAW_CONTAINER_RULES.get(source_suffix, 'flac')
         safe_tmp_root = pathlib.Path(pick_safe_tmp_dir(str(work_dir))).resolve()
         safe_tmp_root.mkdir(parents=True, exist_ok=True)
         safe_source = safe_tmp_root / f"qqsrc_{time.time_ns()}{input_path.suffix.lower()}"
         safe_output = safe_tmp_root / f"qq_{time.time_ns()}.{default_ext}"
-        final_work_path = work_dir / f"{input_path.stem}.{default_ext}"
         backend = 'frida:qqmusic'
         variant_mode = 'not_used'
         decrypt_exception: Exception | None = None

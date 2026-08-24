@@ -2,6 +2,7 @@
 
 import json
 import pathlib
+import platform
 from typing import Any
 
 from src.Infrastructure.runtime_paths import RuntimePaths, appdata_path
@@ -16,10 +17,17 @@ PROJECT_QQ = "2622138410"
 QQMUSIC_ATTRIBUTION = "QQ 音乐解密模型思路参考项目：qqmusic_decrypt（https://github.com/luyikk/qqmusic_decrypt）"
 LEGAL_NOTICE = "其他模型为自主逆向学习实现，仅供学习交流使用；禁止商用，禁止倒卖，倒卖者将举报平台并持续追责。\n格式说明：m4a/mp3/flac 支持补封面；m4a/wav 支持补专辑信息，均优先本地后网络。"
 FLET_NOTE = "main-ui 分支采用 PySide6。PySide6 基于 Qt for Python，桌面界面由本地 Qt 窗口和 Python 业务逻辑直接驱动。"
-DEFAULT_KUGOU_INPUT = pathlib.Path(r"O:\KuGou\KugouMusic")
-DEFAULT_KUWO_INPUT = pathlib.Path(r"C:\Users\01080\Documents\Frontier Developments\Planet Coaster\UserMusic\MusicPack")
-DEFAULT_QQ_INPUT = pathlib.Path("")
-DEFAULT_NETEASE_INPUT = pathlib.Path("")
+if platform.system() == "Darwin":
+    _MUSIC_DIR = pathlib.Path.home() / "Music"
+    DEFAULT_KUGOU_INPUT = _MUSIC_DIR / "KuGou" / "KugouMusic"
+    DEFAULT_KUWO_INPUT = _MUSIC_DIR / "KuwoMusic"
+    DEFAULT_QQ_INPUT = _MUSIC_DIR / "QQMusic"
+    DEFAULT_NETEASE_INPUT = _MUSIC_DIR / "NetEase Cloud Music"
+else:
+    DEFAULT_KUGOU_INPUT = pathlib.Path(r"O:\KuGou\KugouMusic")
+    DEFAULT_KUWO_INPUT = pathlib.Path(r"C:\Users\01080\Documents\Frontier Developments\Planet Coaster\UserMusic\MusicPack")
+    DEFAULT_QQ_INPUT = pathlib.Path("")
+    DEFAULT_NETEASE_INPUT = pathlib.Path("")
 TRANSCODE_SAMPLE_RATE_OPTIONS = (22050, 32000, 44100, 48000, 88200, 96000)
 TRANSCODE_BITRATE_OPTIONS = (96, 128, 160, 192, 256, 320)
 
@@ -67,8 +75,18 @@ def iter_kgg_db_candidates() -> list[pathlib.Path]:
     candidates: list[pathlib.Path] = []
     appdata = appdata_path()
     if appdata is not None:
-        candidates.append(appdata / "KuGou8" / "KGMusicV3.db")
-        candidates.extend(sorted(appdata.glob("KuGou*\\KGMusicV3.db")))
+        if platform.system() == "Darwin":
+            candidates.extend(
+                [
+                    appdata / "KuGou8" / "KGMusicV3.db",
+                    appdata / "com.kugou.mac" / "KGMusicV3.db",
+                    pathlib.Path.home() / "Library" / "Containers" / "com.kugou.mac" / "Data" / "Library" / "Application Support" / "KGMusicV3.db",
+                ]
+            )
+            candidates.extend(sorted(appdata.glob("KuGou*/KGMusicV3.db")))
+        else:
+            candidates.append(appdata / "KuGou8" / "KGMusicV3.db")
+            candidates.extend(sorted(appdata.glob("KuGou*\\KGMusicV3.db")))
     unique: list[pathlib.Path] = []
     seen: set[str] = set()
     for candidate in candidates:
@@ -138,6 +156,7 @@ def load_config(paths: RuntimePaths) -> tuple[dict[str, Any], dict[str, Any]]:
             "output_dir": str(paths.output_dir / "qq"),
             "process_match": "qqmusic",
             "embed_cover_art": True,
+            "transcode_enabled": True,
             "format_rules": {"mflac": "flac", "mgg": "m4a", "mmp4": "m4a"},
             "transcode_sample_rate_hz": None,
             "transcode_bitrate_kbps": None,
@@ -149,6 +168,7 @@ def load_config(paths: RuntimePaths) -> tuple[dict[str, Any], dict[str, Any]]:
             "process_name": "kwmusic.exe",
             "exe_path": "",
             "signature_file": str(default_kuwo_signature_path(paths)),
+            "transcode_enabled": True,
             "format_kwm": "auto",
             "transcode_sample_rate_hz": None,
             "transcode_bitrate_kbps": None,
@@ -159,6 +179,7 @@ def load_config(paths: RuntimePaths) -> tuple[dict[str, Any], dict[str, Any]]:
             "output_dir": str(paths.output_dir / "kugou"),
             "kgg_db_path": str(auto_find_kgg_db_path() or ""),
             "key_file": str(auto_find_kugou_key(paths) or (paths.assets_dir / "kugou_key.xz")),
+            "transcode_enabled": True,
             "target_format_kgma": "auto",
             "target_format_kgg": "auto",
             "transcode_sample_rate_hz": None,
@@ -168,6 +189,7 @@ def load_config(paths: RuntimePaths) -> tuple[dict[str, Any], dict[str, Any]]:
         "netease": {
             "input_dir": str(DEFAULT_NETEASE_INPUT),
             "output_dir": str(paths.output_dir / "netease"),
+            "transcode_enabled": True,
             "target_format_ncm": "auto",
             "transcode_sample_rate_hz": None,
             "transcode_bitrate_kbps": None,
@@ -246,6 +268,12 @@ def load_config(paths: RuntimePaths) -> tuple[dict[str, Any], dict[str, Any]]:
     config["shared"]["cli_collision_policy"] = str(config["shared"].get("cli_collision_policy", "suffix") or "suffix").lower()
     config["shared"]["recursive"] = bool(config["shared"].get("recursive", True))
     for platform_id in ("qq", "kuwo", "kugou", "netease"):
+        transcode_enabled = config[platform_id].get("transcode_enabled", shared_transcode_enabled)
+        if isinstance(transcode_enabled, str):
+            transcode_enabled = transcode_enabled.strip().lower() in {"1", "true", "yes", "y", "on"}
+        else:
+            transcode_enabled = bool(transcode_enabled)
+        config[platform_id]["transcode_enabled"] = transcode_enabled
         auto_transcode = config[platform_id].get("auto_transcode_after_decode", False)
         if isinstance(auto_transcode, str):
             auto_transcode = auto_transcode.strip().lower() in {"1", "true", "yes", "y", "on"}
@@ -343,7 +371,5 @@ def validate_target_format(value: str) -> str:
 
 def supported_transcode_formats() -> list[str]:
     return sorted(SUPPORTED_TARGET_FORMATS)
-
-
 
 

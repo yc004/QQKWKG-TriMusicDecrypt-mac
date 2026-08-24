@@ -1,4 +1,6 @@
 ﻿const path = require("path");
+const fs = require("fs");
+const { spawnSync } = require("child_process");
 const {
   commandSucceeds,
   ensureDir,
@@ -19,13 +21,27 @@ const mainPy = path.join(rootDir, "main.py");
 const assetsDir = path.join(rootDir, "assets");
 const kuwoRuntimeDir = path.join(rootDir, "src", "Infrastructure", "platforms", "kuwo", "runtime_m");
 const appIcon = path.join(rootDir, "封面", "封面.ico");
+const isMac = process.platform === "darwin";
 
 ensureFile(mainPy, "main entry");
 ensureDir(assetsDir, "assets directory");
 ensureDir(kuwoRuntimeDir, "kuwo runtime directory");
 ensureFile(path.join(assetsDir, "kugou_key.xz"), "kugou_key.xz");
-ensureFile(path.join(assetsDir, "kudog_native.dll"), "kudog_native.dll");
-ensureFile(path.join(assetsDir, "ffmpeg-win-x86_64-v7.1.exe"), "bundled ffmpeg");
+ensureFile(
+  path.join(assetsDir, isMac ? "libkudog_native.dylib" : "kudog_native.dll"),
+  "native acceleration library",
+);
+const ffmpegCandidates = isMac
+  ? fs.readdirSync(assetsDir).filter((name) => /^ffmpeg(?:-|$)/.test(name) && !name.endsWith(".exe"))
+  : ["ffmpeg-win-x86_64-v7.1.exe"];
+let ffmpegPath = ffmpegCandidates.length > 0 ? path.join(assetsDir, ffmpegCandidates[0]) : "";
+if (!ffmpegPath && isMac) {
+  const result = spawnSync("which", ["ffmpeg"], { encoding: "utf8", shell: false });
+  if (result.status === 0) {
+    ffmpegPath = (result.stdout || "").trim();
+  }
+}
+ensureFile(ffmpegPath, "ffmpeg (bundle it in assets or install it with Homebrew)");
 ensureFile(path.join(kuwoRuntimeDir, "kwm_export_agent.js"), "kwm_export_agent.js");
 ensureFile(path.join(kuwoRuntimeDir, "out", "recovered_signature.json"), "kuwo recovered signature");
 ensureFile(appIcon, "application icon");
@@ -49,6 +65,10 @@ function ensureModule(moduleName, packageName = moduleName) {
 }
 
 ensureModule("ncmdump", "ncmdump-py");
+ensureModule("cryptography");
+ensureModule("frida");
+ensureModule("mutagen");
+ensureModule("PyInstaller", "pyinstaller");
 
 ensureEmptyDir(distRoot);
 ensureEmptyDir(buildRoot);
@@ -64,8 +84,6 @@ const pyinstallerArgs = [
   "--noconfirm",
   "--clean",
   "--onefile",
-  "--icon",
-  appIcon,
   "--name",
   appName,
   "--distpath",
@@ -83,13 +101,25 @@ const pyinstallerArgs = [
   "--collect-all",
   "ncmdump",
   "--add-data",
-  `${assetsDir};assets`,
+  `${assetsDir}${path.delimiter}assets`,
   "--add-data",
-  `${path.dirname(appIcon)};封面`,
+  `${path.dirname(appIcon)}${path.delimiter}封面`,
   "--add-data",
-  `${kuwoRuntimeDir};src/Infrastructure/platforms/kuwo/runtime_m`,
+  `${kuwoRuntimeDir}${path.delimiter}src/Infrastructure/platforms/kuwo/runtime_m`,
   mainPy,
 ];
 
-run(pythonExe, pyinstallerArgs, { cwd: rootDir });
-ensureFile(path.join(distRoot, `${appName}.exe`), "console onefile executable");
+if (!isMac) {
+  pyinstallerArgs.splice(4, 0, "--icon", appIcon);
+} else if (!ffmpegPath.startsWith(assetsDir + path.sep)) {
+  pyinstallerArgs.splice(pyinstallerArgs.length - 1, 0, "--add-binary", `${ffmpegPath}${path.delimiter}assets`);
+}
+
+run(pythonExe, pyinstallerArgs, {
+  cwd: rootDir,
+  env: {
+    ...process.env,
+    PYINSTALLER_CONFIG_DIR: path.join(buildRoot, "pyinstaller-config"),
+  },
+});
+ensureFile(path.join(distRoot, isMac ? appName : `${appName}.exe`), "console onefile executable");

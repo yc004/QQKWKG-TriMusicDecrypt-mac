@@ -15,6 +15,11 @@ const {
   run,
 } = require("./build-lib");
 
+if (process.platform === "darwin") {
+  require("./package-macos");
+  return;
+}
+
 const rootDir = path.resolve(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, "package.json"), "utf8"));
 const releaseDir = path.join(rootDir, "release");
@@ -223,4 +228,3 @@ function main() {
 }
 
 main();
-

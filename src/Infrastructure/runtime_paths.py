@@ -2,6 +2,7 @@
 
 import os
 import pathlib
+import platform
 import sys
 from dataclasses import dataclass
 
@@ -21,12 +22,19 @@ class RuntimePaths:
     @classmethod
     def discover(cls) -> "RuntimePaths":
         if getattr(sys, "frozen", False):
-            root_dir = pathlib.Path(sys.executable).resolve().parent
+            executable_dir = pathlib.Path(sys.executable).resolve().parent
             bundle_candidates: list[pathlib.Path] = []
             meipass = getattr(sys, "_MEIPASS", None)
             if meipass:
                 bundle_candidates.append(pathlib.Path(meipass).resolve())
-            bundle_candidates.extend([root_dir / "_internal", root_dir / "internal", root_dir])
+            bundle_candidates.extend([executable_dir / "_internal", executable_dir / "internal", executable_dir])
+            # A signed macOS .app bundle is read-only at runtime. Keep mutable
+            # state in Application Support while PyInstaller resources remain
+            # discoverable from Contents/MacOS (or _MEIPASS for onefile).
+            if platform.system() == "Darwin":
+                root_dir = pathlib.Path.home() / "Library" / "Application Support" / "QKKDecrypt"
+            else:
+                root_dir = executable_dir
         else:
             root_dir = pathlib.Path(__file__).resolve().parents[2]
             bundle_candidates = [root_dir]
@@ -60,5 +68,7 @@ class RuntimePaths:
 
 
 def appdata_path() -> pathlib.Path | None:
+    if platform.system() == "Darwin":
+        return pathlib.Path.home() / "Library" / "Application Support"
     value = os.environ.get("APPDATA", "").strip()
     return pathlib.Path(value) if value else None

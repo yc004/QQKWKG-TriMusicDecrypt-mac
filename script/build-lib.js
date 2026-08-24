@@ -105,12 +105,24 @@ function resolvePythonExe(rootDir) {
     return fromEnv;
   }
   const candidates = [
+    path.join(rootDir, ".venv", "bin", "python3"),
+    path.join(rootDir, ".venv", "bin", "python"),
     path.join(rootDir, ".venv", "Scripts", "python.exe"),
     path.join(path.dirname(rootDir), "A_QKKd", ".venv", "Scripts", "python.exe"),
   ];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
       return candidate;
+    }
+  }
+  for (const command of ["python3", "python"]) {
+    const result = spawnSync(command, ["-c", "import sys; print(sys.executable)"], {
+      encoding: "utf8",
+      shell: false,
+    });
+    const resolved = (result.stdout || "").trim();
+    if (result.status === 0 && resolved && fs.existsSync(resolved)) {
+      return resolved;
     }
   }
   ensureFile(candidates[0], "venv python");

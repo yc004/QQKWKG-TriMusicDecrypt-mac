@@ -30,8 +30,8 @@
 ## 当前支持的平台
 
 - `QQ音乐`
-  - 运行期解密
-  - 需要 QQ 音乐进程配合
+  - Windows 使用原有运行期解密
+  - macOS 支持 QTag/V1 内嵌 EKey 文件离线解密；musicex 文件会读取已登录 QQ 音乐的信息并获取 EKey
 - `酷我音乐`
   - 运行期解密
   - 需要酷我进程配合
@@ -39,6 +39,40 @@
   - 文件级离线解密
 - `网易云音乐`
   - 文件级离线解密
+
+## macOS 运行与构建
+
+macOS 适配保持 `Presentation / Application / Infrastructure` 三层结构和原有业务流程不变，平台差异仅封装在基础设施与构建层。当前支持 Apple Silicon 原生构建；Intel Mac 可在对应机器上使用相同脚本生成 `x86_64` 包。
+
+### 下载与安装
+
+- [QKKDecrypt v1.4.4 Release](https://github.com/yc004/QQKWKG-TriMusicDecrypt-mac/releases/tag/v1.4.4)
+- `QKKDecrypt-UI-macOS-arm64.zip`：带界面的 Apple Silicon 版本，推荐普通用户使用
+- `QKKDecrypt-macOS-arm64.zip`：Apple Silicon 命令行版本
+
+解压 UI 包后，将 `QKKDecrypt-UI.app` 移入“应用程序”并启动。该版本已在 Apple Silicon macOS 上完成实际解密、界面启动、原生库加载、代码签名完整性和 9 项自动化测试验证。
+
+QQ 音乐 QTag/V1 文件可直接离线处理。若 musicex 文件提示权限不足，请保证 macOS QQ 音乐已经登录，并在“系统设置 → 隐私与安全性 → 完全磁盘访问权限”中允许 `QKKDecrypt-UI`，然后彻底退出并重新打开应用。
+
+### 从源码构建
+
+开发环境要求 Python 3.10 或更高版本、Node.js，以及 FFmpeg（可放入 `assets`，也可通过 Homebrew 安装）：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-build.txt
+npm run package:mac
+```
+
+产物位于：
+
+- `release/QKKDecrypt`
+- `release/QKKDecrypt-macOS-<arch>.zip`
+- `release/QKKDecrypt-UI-macOS-<arch>.zip`（标准 macOS `.app`）
+
+macOS 打包版的配置、日志和默认输出目录位于 `~/Library/Application Support/QKKDecrypt`。QQ 音乐的 QTag/V1 `.mflac/.mgg` 会走纯离线 QMC2 解密；新版 musicex 文件会从已登录的 QQ 音乐客户端读取凭据并请求该文件对应的 EKey。酷狗、网易云和批量转码均使用与 Windows 相同的应用层逻辑；原生加速库会构建为 `.dylib`，AES 使用跨平台密码库实现相同算法。
+
+QQ 音乐的 Windows 运行期链仍保留不变，macOS 改用格式兼容的 QMC2 离线/EKey 链，因此不再依赖 Windows DLL。酷我的运行期解密仍依赖 Windows 客户端内部 ABI；仓库现有资料只有 DLL 名称、MSVC 符号和 `thiscall` 调用约定，不能直接复用到 macOS Mach-O 客户端。
 
 ## UI 路线
 
@@ -52,6 +86,8 @@ UI 版本继续使用 **PySide6**，并逐步引入 **QFluentWidgets** 做导航
 
 ## 打包
 
+Windows：
+
 ```powershell
 npm run package
 ```
@@ -59,6 +95,12 @@ npm run package
 默认会构建：
 - `QKKDecrypt.exe`
 - `QKKDecrypt-UI-setup.exe`
+
+macOS：
+
+```bash
+npm run package:mac
+```
 
 ## 合规与风险边界
 

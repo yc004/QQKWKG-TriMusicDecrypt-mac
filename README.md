@@ -14,7 +14,7 @@
 - UI 版本：面向普通用户的桌面工作台
 - 架构保持三层：`Presentation / Application / Infrastructure`
 
-当前仓库源码统一按 **GPLv3** 发布；UI 路线采用 **PySide6 + QFluentWidgets** 的非商业 GPLv3 路线持续重构。
+当前仓库源码统一按 **GPLv3** 发布。Windows UI 保留 **PySide6 + QFluentWidgets**；macOS UI 使用 **SwiftUI + AppKit** 原生架构，二者复用同一套 Python Application / Infrastructure 业务层。
 
 ## 分支说明
 
@@ -23,9 +23,9 @@
   - 薄入口 `main.py`
   - 打包形态：`onefile`
 - `main-ui`
-  - PySide6 桌面 UI 版本
-  - 保留无边框、Win10/11 风格、亚克力效果与动态进度反馈
-  - 打包形态：`onedir + _internal + setup`
+  - Windows：PySide6 桌面 UI，保留 Win10/11 风格、亚克力效果与动态进度反馈
+  - macOS：SwiftUI/AppKit 原生桌面 UI，使用系统 NavigationSplitView、Toolbar、Form、Alert、文件面板和 Liquid Glass
+  - 两端仅表现层不同，解密、转码、配置和平台适配逻辑保持一致
 
 ## 当前支持的平台
 
@@ -46,7 +46,7 @@ macOS 适配保持 `Presentation / Application / Infrastructure` 三层结构和
 
 ### 下载与安装
 
-- [QKKDecrypt v1.4.4 Release](https://github.com/yc004/QQKWKG-TriMusicDecrypt-mac/releases/tag/v1.4.4)
+- [QKKDecrypt v1.5.0 Release](https://github.com/yc004/QQKWKG-TriMusicDecrypt-mac/releases/tag/v1.5.0)
 - `QKKDecrypt-UI-macOS-arm64.zip`：带界面的 Apple Silicon 版本，推荐普通用户使用
 - `QKKDecrypt-macOS-arm64.zip`：Apple Silicon 命令行版本
 
@@ -56,7 +56,7 @@ QQ 音乐 QTag/V1 文件可直接离线处理。若 musicex 文件提示权限�
 
 ### 从源码构建
 
-开发环境要求 Python 3.10 或更高版本、Node.js，以及 FFmpeg（可放入 `assets`，也可通过 Homebrew 安装）：
+开发环境要求 Python 3.10 或更高版本、Node.js、Swift 6 / macOS SDK，以及 FFmpeg（可放入 `assets`，也可通过 Homebrew 安装）：
 
 ```bash
 python3 -m venv .venv
@@ -69,6 +69,7 @@ npm run package:mac
 - `release/QKKDecrypt`
 - `release/QKKDecrypt-macOS-<arch>.zip`
 - `release/QKKDecrypt-UI-macOS-<arch>.zip`（标准 macOS `.app`）
+- `release/QKKDecrypt-UI-macOS-<arch>.dmg`（拖入“应用程序”安装）
 
 macOS 打包版的配置、日志和默认输出目录位于 `~/Library/Application Support/QKKDecrypt`。QQ 音乐的 QTag/V1 `.mflac/.mgg` 会走纯离线 QMC2 解密；新版 musicex 文件会从已登录的 QQ 音乐客户端读取凭据并请求该文件对应的 EKey。酷狗、网易云和批量转码均使用与 Windows 相同的应用层逻辑；原生加速库会构建为 `.dylib`，AES 使用跨平台密码库实现相同算法。
 
@@ -76,13 +77,11 @@ QQ 音乐的 Windows 运行期链仍保留不变，macOS 改用格式兼容的 Q
 
 ## UI 路线
 
-UI 版本继续使用 **PySide6**，并逐步引入 **QFluentWidgets** 做导航、卡片和桌面风格控件，目标体验参考 Steam++：
-- 左侧导航栏
-- 页面分区明确
-- 设置页面独立
-- 小窗口/辅助页独立
-- 无边框桌面体验
-- 动态进度反馈与现代化状态提示
+macOS 主界面采用真正的 **SwiftUI + AppKit** 原生架构，不再通过 Qt 模拟 Apple 外观。界面使用系统 `NavigationSplitView`、Toolbar、Form、GroupBox、Alert、`NSOpenPanel`、SF Symbols、动态系统色、辅助功能语义和键盘快捷键；在 macOS 26 及以上由系统标准组件自动采用 Liquid Glass，任务状态、文件选择、任务记录操作与底部主操作区使用 `GlassEffectContainer`、`glassEffect`、`glass` 和 `glassProminent` 构成统一的悬浮功能层。步骤卡片与日志正文仍使用标准内容层，确保层级和可读性；旧版 macOS 会自动降级为系统 Material 与 bordered 控件。设计依据为 Apple 官方 [Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/)、[Materials](https://developer.apple.com/design/human-interface-guidelines/materials) 与 [Adopting Liquid Glass](https://developer.apple.com/documentation/TechnologyOverviews/adopting-liquid-glass)。
+
+主窗口采用以任务为中心的连续工作流：边栏只保留“工作台”和“任务记录”，解密与批量转码在同一工作台内切换；任务类型、音乐平台和转码格式在 macOS 27 使用系统 `Picker(.tabs)` 滑动胶囊，由系统负责选中形态、动画和辅助功能，旧系统自动降级为原生 `Picker(.segmented)`。布尔配置统一使用系统 switch 开关。输入输出、处理方式和执行操作按步骤排列，高级参数默认收起，运行状态与停止操作固定显示在窗口底部。低频全局配置使用标准 macOS `⌘,` 设置窗口，减少主流程中的跳转和重复配置。
+
+SwiftUI 前端通过内嵌的 `QKKDecryptBackend` 薄桥接调用原有 Python CLI：平台解密、批量转码、配置格式、输出路径和运行时适配仍由既有 Application / Infrastructure 层负责。Windows 继续构建原 PySide6 UI，功能逻辑不分叉。
 
 ## 打包
 
@@ -128,6 +127,7 @@ npm run package:mac
 - [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md)
 
 当前需要特别注意：
+- `SwiftUI / AppKit`（macOS 系统框架）
 - `PySide6`
 - `PySide6-Fluent-Widgets`
 - `FFmpeg`

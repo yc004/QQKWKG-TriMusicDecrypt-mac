@@ -519,7 +519,40 @@ def build_parser(paths: RuntimePaths) -> argparse.ArgumentParser:
     transcode_parser.add_argument("--no-recursive", action="store_true", help="禁用递归扫描")
     transcode_parser.add_argument("--max-workers", type=int, choices=[1, 2, 3, 4], help="并发转码任务数，1-4")
     transcode_parser.add_argument("--rule", action="append", help="规则格式：<source>:<target>[:sample_rate_hz[:bitrate_kbps]]，例如 全部:m4a:48000:256")
+
+    native_config_parser = sub.add_parser(
+        "native-config",
+        help="供 macOS 原生界面使用的配置桥接命令",
+    )
+    native_config_sub = native_config_parser.add_subparsers(dest="command")
+    native_config_sub.add_parser("get", help="以 JSON 输出当前完整配置")
+    native_config_sub.add_parser("set", help="从标准输入读取 JSON 并保存配置")
     return parser
+
+
+def _run_native_config(paths: RuntimePaths, config: dict[str, Any], command: str | None) -> int:
+    if command == "get":
+        print(json.dumps(config, ensure_ascii=False))
+        return 0
+    if command != "set":
+        print("native-config requires get or set", file=sys.stderr)
+        return 2
+    try:
+        payload = json.load(sys.stdin)
+    except Exception as exc:
+        print(f"invalid native config JSON: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(payload, dict):
+        print("native config must be a JSON object", file=sys.stderr)
+        return 2
+    for section in ("shared", "qq", "kuwo", "kugou", "netease", "transcode_batch"):
+        value = payload.get(section)
+        if isinstance(value, dict):
+            config.setdefault(section, {}).update(value)
+    root, _ = load_config(paths)
+    save_config(paths, root, config)
+    print(json.dumps(config, ensure_ascii=False))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -538,6 +571,8 @@ def main(argv: list[str] | None = None) -> int:
             return admin_code
         return run_interactive()
     _, config = load_config(paths)
+    if args.platform == "native-config":
+        return _run_native_config(paths, config, args.command)
     if args.platform == "transcode-batch":
         return _run_transcode_batch_cli(paths, config, args)
     if args.platform == "kugou" and args.command == "refresh-key":
@@ -591,6 +626,5 @@ def main(argv: list[str] | None = None) -> int:
     config[platform_id].update(settings)
     recursive = not args.no_recursive
     return _run_platform(platform_id, config, input_override=args.input, output_override=args.output, recursive_override=recursive, interactive=False)
-
 
 

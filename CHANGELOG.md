@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-08-25
+
+### Added
+
+- Added a fully native SwiftUI and AppKit macOS interface while retaining the existing Python application and infrastructure layers.
+- Added native macOS navigation, toolbar, settings, alerts, file panels, system switches, tab pickers and Liquid Glass presentation.
+- Added a reusable DMG packaging step with an Applications shortcut.
+
+### Changed
+
+- Redesigned the macOS workflow around platform decryption, batch transcoding, task history and persistent configuration.
+- Replaced simulated macOS controls with Apple system components and native accessibility semantics.
+- Updated the application icon and macOS packaging pipeline for the current SDK.
+
+### Validation
+
+- Verified the native application workflow in a real macOS window.
+- Passed 9 automated platform/decryption tests and strict bundle signature verification.
+- Verified the frontend executable is built with macOS SDK 27.0 and targets macOS 15.0 or later.
+
 ## [1.4.4] - 2026-08-24
 
 ### Added

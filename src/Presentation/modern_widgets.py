@@ -1,8 +1,10 @@
 ﻿from __future__ import annotations
 
+import platform
+
 from PySide6.QtCore import Property, QTimer, Qt
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QFrame, QGraphicsDropShadowEffect, QLabel, QProgressBar, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QPalette
+from PySide6.QtWidgets import QApplication, QFrame, QGraphicsDropShadowEffect, QLabel, QProgressBar, QVBoxLayout, QWidget
 
 
 class AnimatedProgressBar(QProgressBar):
@@ -24,6 +26,10 @@ class AnimatedProgressBar(QProgressBar):
         self._refresh_style()
 
     def _refresh_style(self) -> None:
+        if platform.system() == "Darwin":
+            self.setStyleSheet("")
+            self.setFixedHeight(6)
+            return
         start = max(0.0, min(1.0, self._shift / 100.0))
         middle = max(0.0, min(1.0, (self._shift + 22) / 100.0))
         end = max(0.0, min(1.0, (self._shift + 44) / 100.0))
@@ -103,6 +109,23 @@ class StatusPill(QLabel):
         self.set_tone(tone)
 
     def set_tone(self, tone: str) -> None:
+        if platform.system() == "Darwin":
+            palette = QApplication.palette()
+            semantic = {
+                "idle": palette.color(QPalette.ColorRole.PlaceholderText),
+                "active": palette.color(QPalette.ColorRole.Highlight),
+                "success": QColor("#34C759"),
+                "warning": QColor("#FF9F0A"),
+                "danger": QColor("#FF3B30"),
+            }
+            foreground = semantic.get(tone, semantic["idle"])
+            background = QColor(foreground)
+            background.setAlpha(28)
+            self.setStyleSheet(
+                f"background:{background.name(QColor.NameFormat.HexArgb)}; color:{foreground.name()}; "
+                "border:none; border-radius:8px; padding:3px 8px; font-weight:600;"
+            )
+            return
         background, foreground = self._TONES.get(tone, self._TONES["idle"])
         self.setStyleSheet(
             f"background:{background}; color:{foreground}; border:1px solid rgba(255,255,255,0.08); border-radius:11px; padding:5px 10px; font-weight:600;"
@@ -110,6 +133,8 @@ class StatusPill(QLabel):
 
 
 def apply_card_shadow(widget: QWidget) -> None:
+    if platform.system() == "Darwin":
+        return
     shadow = QGraphicsDropShadowEffect(widget)
     shadow.setBlurRadius(28)
     shadow.setOffset(0, 10)

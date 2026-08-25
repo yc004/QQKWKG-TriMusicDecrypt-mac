@@ -1,7 +1,9 @@
 ﻿from __future__ import annotations
 
 import ctypes
+import platform
 from ctypes import wintypes
+from typing import Any
 
 from PySide6.QtWidgets import QWidget
 
@@ -59,3 +61,53 @@ def apply_win10_acrylic(widget: QWidget, *, dark: bool = True) -> bool:
         return bool(set_attr(wintypes.HWND(hwnd), ctypes.byref(data)))
     except Exception:
         return False
+
+
+def apply_macos_liquid_glass(
+    widget: QWidget,
+    *,
+    style: str = "regular",
+    corner_radius: float = 0.0,
+) -> Any | None:
+    """Place native Liquid Glass behind a Qt widget's content on macOS."""
+    if platform.system() != "Darwin":
+        return None
+    try:
+        import AppKit
+        import objc
+
+        native_view = objc.objc_object(c_void_p=int(widget.winId()))
+        frame = native_view.bounds()
+        glass_class = getattr(AppKit, "NSGlassEffectView", None)
+        if glass_class is not None:
+            glass_view = glass_class.alloc().initWithFrame_(frame)
+            glass_view.setStyle_(
+                getattr(AppKit, "NSGlassEffectViewStyleClear", 1)
+                if style == "clear"
+                else getattr(AppKit, "NSGlassEffectViewStyleRegular", 0)
+            )
+            if hasattr(glass_view, "setEffectIsInteractive_"):
+                glass_view.setEffectIsInteractive_(False)
+            if corner_radius > 0 and hasattr(glass_view, "setCornerRadius_"):
+                glass_view.setCornerRadius_(corner_radius)
+        else:
+            glass_view = AppKit.NSVisualEffectView.alloc().initWithFrame_(frame)
+            glass_view.setMaterial_(
+                AppKit.NSVisualEffectMaterialSidebar
+                if style == "clear"
+                else AppKit.NSVisualEffectMaterialHeaderView
+            )
+            glass_view.setBlendingMode_(AppKit.NSVisualEffectBlendingModeBehindWindow)
+            glass_view.setState_(AppKit.NSVisualEffectStateActive)
+
+        glass_view.setAutoresizingMask_(
+            AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable
+        )
+        native_view.addSubview_positioned_relativeTo_(
+            glass_view,
+            AppKit.NSWindowBelow,
+            None,
+        )
+        return glass_view
+    except Exception:
+        return None

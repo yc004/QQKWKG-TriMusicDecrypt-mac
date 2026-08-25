@@ -1,13 +1,14 @@
 {
   "name": "qkkdecrypt",
-  "version": "1.4.4",
+  "version": "1.5.0",
   "private": true,
   "description": "QKKDecrypt packaging and release entry",
   "scripts": {
     "package": "node script/package.js",
     "package:mac": "node script/package-macos.js",
     "build:console": "node script/build-console.js",
-    "build:ui": "node script/build-ui.js",
+    "build:ui": "node script/build-platform-ui.js",
+    "build:qt-ui": "node script/build-ui.js",
     "build:native": "node script/build-native.js",
     "release": "semantic-release"
   },

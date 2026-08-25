@@ -10,7 +10,7 @@ import threading
 from typing import Any
 
 from PySide6.QtCore import QObject, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QIcon, QMouseEvent, QShowEvent, QWheelEvent
+from PySide6.QtGui import QColor, QDesktopServices, QFontDatabase, QIcon, QMouseEvent, QPalette, QShowEvent, QWheelEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QListView,
     QMessageBox,
     QPushButton,
@@ -34,10 +36,13 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QStyle,
+    QStyleFactory,
     QTabBar,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -66,7 +71,7 @@ from src.Infrastructure.platforms.registry import build_platform_adapter
 from src.Infrastructure.runtime_paths import RuntimePaths
 from src.Presentation.modern_widgets import AnimatedProgressBar, MetricTile, StatusPill, apply_card_shadow
 from src.Presentation.transcode_card import TranscodeBatchCard
-from src.Presentation.window_effects import apply_win10_acrylic
+from src.Presentation.window_effects import apply_macos_liquid_glass, apply_win10_acrylic
 from qfluentwidgets import FluentIcon as FIF, NavigationInterface, NavigationItemPosition, Theme, setTheme
 
 WINDOW_BG = "#101215"
@@ -264,7 +269,156 @@ class NoWheelTabBar(QTabBar):
         event.ignore()
 
 
+class MacSidebarNavigation(QListWidget):
+    """A small compatibility adapter backed by the native Qt item-view stack."""
+
+    _STANDARD_ICONS = {
+        "overview": QStyle.StandardPixmap.SP_ComputerIcon,
+        "decrypt": QStyle.StandardPixmap.SP_DriveHDIcon,
+        "transcode": QStyle.StandardPixmap.SP_BrowserReload,
+        "settings": QStyle.StandardPixmap.SP_FileDialogDetailedView,
+        "logs": QStyle.StandardPixmap.SP_FileIcon,
+        "tips": QStyle.StandardPixmap.SP_MessageBoxQuestion,
+        "output": QStyle.StandardPixmap.SP_DirOpenIcon,
+    }
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("MacSidebarList")
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setUniformItemSizes(True)
+        self.setIconSize(self.iconSize().expandedTo(self.iconSize()))
+        self._items: dict[str, QListWidgetItem] = {}
+        self._callbacks: dict[str, Any] = {}
+        self._selectable: dict[str, bool] = {}
+        self._current_route = "overview"
+        self._bottom_section_added = False
+        self.itemClicked.connect(self._activate_item)
+
+    def addItem(  # type: ignore[override]
+        self,
+        route_key: str | QListWidgetItem,
+        _icon: Any = None,
+        text: str | None = None,
+        *,
+        onClick: Any = None,
+        position: Any = None,
+        selectable: bool = True,
+    ) -> None:
+        if isinstance(route_key, QListWidgetItem):
+            super().addItem(route_key)
+            return
+        if position == NavigationItemPosition.BOTTOM and not self._bottom_section_added:
+            section = QListWidgetItem("操作")
+            section.setFlags(Qt.ItemFlag.NoItemFlags)
+            section.setData(Qt.ItemDataRole.UserRole, "__section__")
+            super().addItem(section)
+            self._bottom_section_added = True
+        icon = self.style().standardIcon(
+            self._STANDARD_ICONS.get(route_key, QStyle.StandardPixmap.SP_FileIcon)
+        )
+        item = QListWidgetItem(icon, text or route_key)
+        item.setData(Qt.ItemDataRole.UserRole, route_key)
+        item.setToolTip(text or route_key)
+        super().addItem(item)
+        self._items[route_key] = item
+        self._callbacks[route_key] = onClick
+        self._selectable[route_key] = bool(selectable)
+
+    def _activate_item(self, item: QListWidgetItem) -> None:
+        route_key = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        callback = self._callbacks.get(route_key)
+        if callable(callback):
+            callback()
+        if self._selectable.get(route_key, False):
+            self._current_route = route_key
+        elif self._current_route in self._items:
+            super().setCurrentItem(self._items[self._current_route])
+
+    def setCurrentItem(self, route_key: str | QListWidgetItem) -> None:  # type: ignore[override]
+        if isinstance(route_key, QListWidgetItem):
+            super().setCurrentItem(route_key)
+            return
+        item = self._items.get(route_key)
+        if item is not None:
+            self._current_route = route_key
+            super().setCurrentItem(item)
+
+
+def _palette_css(role: QPalette.ColorRole, *, alpha: int | None = None) -> str:
+    color = QApplication.palette().color(role)
+    if alpha is not None:
+        color.setAlpha(alpha)
+        return color.name(QColor.NameFormat.HexArgb)
+    return color.name()
+
+
+def build_macos_stylesheet() -> str:
+    window = _palette_css(QPalette.ColorRole.Window)
+    base = _palette_css(QPalette.ColorRole.Base)
+    text = _palette_css(QPalette.ColorRole.WindowText)
+    secondary = _palette_css(QPalette.ColorRole.PlaceholderText)
+    separator = _palette_css(QPalette.ColorRole.Mid, alpha=90)
+    accent = _palette_css(QPalette.ColorRole.Highlight)
+    accent_text = _palette_css(QPalette.ColorRole.HighlightedText)
+    selected = _palette_css(QPalette.ColorRole.Highlight, alpha=48)
+    hover = _palette_css(QPalette.ColorRole.Highlight, alpha=24)
+    glass_fill = _palette_css(QPalette.ColorRole.Base, alpha=118)
+    glass_hover = _palette_css(QPalette.ColorRole.Base, alpha=165)
+    content_fill = _palette_css(QPalette.ColorRole.Base, alpha=226)
+    card_fill = _palette_css(QPalette.ColorRole.Base, alpha=206)
+    highlight_edge = "rgba(255, 255, 255, 0.42)"
+    return f"""
+    QWidget {{ color: {text}; }}
+    QWidget#RootWindow, QFrame#WindowSurface {{ background: transparent; }}
+    QScrollArea#MainScroll, QScrollArea#MainScroll QWidget#qt_scrollarea_viewport,
+    QWidget#MainScrollBody {{ background: {content_fill}; color: {text}; }}
+    QFrame#MacToolbar {{ background: transparent; border: none; }}
+    QLabel#ToolbarTitle {{ font-size: 15px; font-weight: 600; color: {text}; padding-left: 2px; }}
+    QLabel#SubtitleLabel, QLabel#MutedText, QLabel#CardSubtitle, QLabel#HeroSubtitle {{ color: {secondary}; }}
+    QLabel#HeroTitle {{ font-size: 22px; font-weight: 600; color: {text}; }}
+    QLabel#SectionTitle {{ font-size: 15px; font-weight: 600; color: {text}; }}
+    QLabel#CardTitle {{ font-size: 15px; font-weight: 600; color: {text}; }}
+    QLabel#MetricValue {{ font-size: 24px; font-weight: 600; color: {text}; }}
+    QLabel#FieldLabel {{ color: {secondary}; font-size: 12px; }}
+    QFrame#SidebarNavHost {{ background: transparent; border: none; }}
+    QListWidget#MacSidebarList {{ background: transparent; border: none; outline: none; padding: 8px; }}
+    QListWidget#MacSidebarList::item {{ min-height: 34px; padding: 3px 10px; border: 1px solid transparent; border-radius: 17px; }}
+    QListWidget#MacSidebarList::item:hover {{ background: {hover}; }}
+    QListWidget#MacSidebarList::item:selected {{ background: {glass_fill}; color: {text}; border-color: {highlight_edge}; }}
+    QListWidget#MacSidebarList::item:disabled {{ color: {secondary}; font-size: 11px; font-weight: 600; padding-top: 12px; }}
+    QFrame#HeroCard, QFrame#SidebarCard, QFrame#WorkspaceCard, QFrame#InfoCard,
+    QFrame#ConfigCard, QFrame#PlatformCard, QFrame#NoticeCard {{ background: {card_fill}; border: 1px solid {highlight_edge}; border-radius: 18px; }}
+    QFrame#HeroCard {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {glass_fill}, stop:1 {card_fill}); }}
+    QFrame#MiniCard, QFrame#StatusBox, QFrame#MetricTile {{ background: {glass_fill}; border: 1px solid {highlight_edge}; border-radius: 14px; }}
+    QPushButton {{ background: {glass_fill}; border: 1px solid {highlight_edge}; border-radius: 14px; padding: 7px 16px; min-height: 22px; }}
+    QPushButton:hover {{ background: {glass_hover}; }}
+    QPushButton:pressed {{ background: {selected}; }}
+    QPushButton#PrimaryButton {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {accent}, stop:1 #0878E8); color: {accent_text}; border: 1px solid rgba(255,255,255,0.35); border-radius: 14px; padding: 7px 18px; min-height: 22px; font-weight: 600; }}
+    QPushButton#DangerButton, QPushButton#DangerRoundButton {{ color: #FF3B30; }}
+    QPushButton#RoundButton, QPushButton#DangerRoundButton {{ min-width: 28px; min-height: 28px; padding: 0px; }}
+    QLineEdit, QComboBox, QPlainTextEdit {{ background: {glass_fill}; border: 1px solid {separator}; border-radius: 11px; padding: 7px 10px; selection-background-color: {accent}; }}
+    QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{ border: 2px solid {accent}; }}
+    QPlainTextEdit#LogView {{ background: {base}; border: 1px solid {highlight_edge}; border-radius: 14px; }}
+    QTabWidget::pane {{ border: 1px solid {highlight_edge}; border-radius: 16px; background: {card_fill}; top: 8px; }}
+    QTabBar {{ background: transparent; }}
+    QTabBar::tab {{ background: {glass_fill}; border: 1px solid transparent; border-radius: 14px; padding: 7px 18px; margin: 0px 3px; min-width: 82px; }}
+    QTabBar::tab:hover {{ background: {glass_hover}; }}
+    QTabBar::tab:selected {{ background: {selected}; border-color: {highlight_edge}; color: {text}; }}
+    QSplitter::handle {{ background: {separator}; width: 1px; }}
+    QToolButton {{ background: {glass_fill}; border: 1px solid {highlight_edge}; min-width: 34px; min-height: 34px; border-radius: 17px; font-size: 17px; }}
+    QToolButton:hover {{ background: {glass_hover}; }}
+    QScrollBar:vertical {{ background: transparent; width: 8px; }}
+    QScrollBar::handle:vertical {{ background: {separator}; min-height: 32px; border-radius: 4px; }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+    """
+
+
 def build_app_stylesheet() -> str:
+    if platform.system() == "Darwin":
+        return build_macos_stylesheet()
     window_surface = "rgba(11, 15, 21, 0.28)" if platform.system() == "Windows" else "#10141B"
     root_surface = "transparent" if platform.system() == "Windows" else "#10141B"
     return f"""
@@ -428,13 +582,16 @@ class StartupNoticeDialog(QDialog):
         self._drag_origin: QPoint | None = None
         self.setWindowTitle("免费软件提示")
         self.setModal(True)
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        if platform.system() == "Darwin":
+            self.setWindowFlags(Qt.WindowType.Dialog)
+        else:
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, platform.system() == "Windows")
-        self.setFixedSize(520, 280)
+        self.setFixedSize(460 if platform.system() == "Darwin" else 520, 230 if platform.system() == "Darwin" else 280)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setContentsMargins(20 if platform.system() == "Darwin" else 10, 20 if platform.system() == "Darwin" else 10, 20 if platform.system() == "Darwin" else 10, 20 if platform.system() == "Darwin" else 10)
         outer.setSpacing(0)
 
         shell = QFrame()
@@ -446,7 +603,10 @@ class StartupNoticeDialog(QDialog):
 
         title_bar = TitleBar(self, "免费软件提示")
         title_bar.min_button.hide()
-        shell_layout.addWidget(title_bar)
+        if platform.system() == "Darwin":
+            title_bar.hide()
+        else:
+            shell_layout.addWidget(title_bar)
 
         body = QFrame()
         body.setObjectName("NoticeCard")
@@ -466,12 +626,22 @@ class StartupNoticeDialog(QDialog):
 
         confirm = QPushButton("我知道了")
         confirm.setObjectName("PrimaryButton")
+        confirm.setDefault(True)
         confirm.clicked.connect(self.accept)
 
         body_layout.addWidget(title)
         body_layout.addWidget(message)
         body_layout.addStretch(1)
-        body_layout.addWidget(confirm)
+        if platform.system() == "Darwin":
+            action_row = QHBoxLayout()
+            tips_button = QPushButton("使用技巧…")
+            tips_button.clicked.connect(lambda: UsageTipsDialog(USAGE_TIPS, self).exec())
+            action_row.addStretch(1)
+            action_row.addWidget(tips_button)
+            action_row.addWidget(confirm)
+            body_layout.addLayout(action_row)
+        else:
+            body_layout.addWidget(confirm)
         shell_layout.addWidget(body)
 
         self.setStyleSheet(build_app_stylesheet())
@@ -1299,6 +1469,8 @@ class MainWindow(QWidget):
         self._drag_origin: QPoint | None = None
         self._cards: dict[str, PlatformCard] = {}
         self._acrylic_applied = False
+        self._macos_glass_views: list[Any] = []
+        self._macos_glass_targets: list[tuple[QWidget, str, float]] = []
         self._tab_platform_ids: list[str] = []
         self._workspace_pages: dict[str, QWidget] = {}
         self._build_ui()
@@ -1314,13 +1486,13 @@ class MainWindow(QWidget):
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
         if platform.system() == "Darwin":
-            self.setMinimumSize(1000, 680)
-            self.resize(1200, 720)
+            self.setMinimumSize(960, 640)
+            self.resize(1180, 760)
         else:
             self.setMinimumSize(1280, 820)
             self.resize(1500, 940)
         self.setWindowFlags(Qt.WindowType.Window)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, platform.system() == "Windows")
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1332,6 +1504,33 @@ class MainWindow(QWidget):
         surface_layout.setContentsMargins(0, 0, 0, 0)
         surface_layout.setSpacing(0)
         outer.addWidget(surface)
+
+        if platform.system() == "Darwin":
+            toolbar = QFrame()
+            toolbar.setObjectName("MacToolbar")
+            toolbar.setFixedHeight(58)
+            toolbar_layout = QHBoxLayout(toolbar)
+            toolbar_layout.setContentsMargins(12, 8, 12, 8)
+            toolbar_layout.setSpacing(8)
+            self.sidebar_toggle_button = QToolButton()
+            self.sidebar_toggle_button.setAutoRaise(True)
+            self.sidebar_toggle_button.setText("☰")
+            self.sidebar_toggle_button.setAccessibleName("显示或隐藏边栏")
+            self.sidebar_toggle_button.setToolTip("显示或隐藏边栏")
+            self.toolbar_title_label = QLabel("总览")
+            self.toolbar_title_label.setObjectName("ToolbarTitle")
+            self.toolbar_output_button = QToolButton()
+            self.toolbar_output_button.setAutoRaise(True)
+            self.toolbar_output_button.setIcon(
+                self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
+            )
+            self.toolbar_output_button.setToolTip("打开输出目录")
+            toolbar_layout.addWidget(self.sidebar_toggle_button)
+            toolbar_layout.addWidget(self.toolbar_title_label)
+            toolbar_layout.addStretch(1)
+            toolbar_layout.addWidget(self.toolbar_output_button)
+            surface_layout.addWidget(toolbar)
+            self._macos_glass_targets.append((toolbar, "regular", 0.0))
 
         top_banner = QFrame()
         top_banner.setObjectName("TopBanner")
@@ -1359,8 +1558,9 @@ class MainWindow(QWidget):
         body = QWidget()
         body.setObjectName("MainScrollBody")
         body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(22, 20, 22, 22)
-        body_layout.setSpacing(16)
+        macos = platform.system() == "Darwin"
+        body_layout.setContentsMargins(0 if macos else 22, 0 if macos else 20, 0 if macos else 22, 0 if macos else 22)
+        body_layout.setSpacing(0 if macos else 16)
         scroll.setWidget(body)
 
         hero_card = QFrame()
@@ -1375,14 +1575,21 @@ class MainWindow(QWidget):
         title = QLabel("统一解密工作台")
         title.setObjectName("HeroTitle")
         desc = QLabel(
-            "保留无边框体验，把共享设置、平台解密和批量转码拆成清晰的工作区。先确认输出与附加策略，再切到平台页执行任务。"
+            "使用标准 macOS 边栏、工具栏和内容层级组织解密任务。先确认输出策略，再从边栏进入对应功能。"
+            if platform.system() == "Darwin"
+            else "保留无边框体验，把共享设置、平台解密和批量转码拆成清晰的工作区。先确认输出与附加策略，再切到平台页执行任务。"
         )
         desc.setWordWrap(True)
         desc.setObjectName("HeroSubtitle")
         chip_row = QHBoxLayout()
         chip_row.setContentsMargins(0, 0, 0, 0)
         chip_row.setSpacing(8)
-        for label, tone in (("PySide6", "active"), ("无边框", "warning"), ("FFmpeg 内置", "success")):
+        hero_badges = (
+            (("macOS", "active"), ("系统控件", "idle"), ("FFmpeg 内置", "success"))
+            if platform.system() == "Darwin"
+            else (("PySide6", "active"), ("无边框", "warning"), ("FFmpeg 内置", "success"))
+        )
+        for label, tone in hero_badges:
             pill = StatusPill(label, tone)
             chip_row.addWidget(pill)
         chip_row.addStretch(1)
@@ -1512,28 +1719,39 @@ class MainWindow(QWidget):
         shared_layout.addWidget(self.album_note)
         shared_layout.addLayout(action_row)
 
-        body_shell = QHBoxLayout()
-        body_shell.setContentsMargins(0, 0, 0, 0)
-        body_shell.setSpacing(14)
+        body_shell = None if macos else QHBoxLayout()
+        if body_shell is not None:
+            body_shell.setContentsMargins(0, 0, 0, 0)
+            body_shell.setSpacing(14)
 
         nav_frame = QFrame()
         nav_frame.setObjectName("SidebarNavHost")
-        nav_frame.setFixedWidth(252)
+        self.sidebar_frame = nav_frame
+        if macos:
+            nav_frame.setMinimumWidth(180)
+            nav_frame.setMaximumWidth(280)
+        else:
+            nav_frame.setFixedWidth(252)
         nav_layout = QVBoxLayout(nav_frame)
-        nav_layout.setContentsMargins(14, 16, 14, 16)
-        nav_layout.setSpacing(10)
-        nav_title = QLabel("导航")
+        nav_layout.setContentsMargins(12 if macos else 14, 14 if macos else 16, 12 if macos else 14, 14 if macos else 16)
+        nav_layout.setSpacing(6 if macos else 10)
+        nav_title = QLabel(PROJECT_NAME_EN if macos else "导航")
         nav_title.setObjectName("SectionTitle")
-        nav_subtitle = QLabel("像 Steam++ 一样，把常用任务拆成独立页面。")
+        nav_subtitle = QLabel("音乐解密与转码" if macos else "像 Steam++ 一样，把常用任务拆成独立页面。")
         nav_subtitle.setObjectName("MutedText")
         nav_subtitle.setWordWrap(True)
         nav_layout.addWidget(nav_title)
         nav_layout.addWidget(nav_subtitle)
 
-        self.workspace_nav = NavigationInterface(nav_frame, showMenuButton=False, showReturnButton=False, collapsible=False)
-        self.workspace_nav.setMinimumWidth(220)
+        if macos:
+            self.workspace_nav = MacSidebarNavigation(nav_frame)
+            self.workspace_nav.setMinimumWidth(156)
+        else:
+            self.workspace_nav = NavigationInterface(nav_frame, showMenuButton=False, showReturnButton=False, collapsible=False)
+            self.workspace_nav.setMinimumWidth(220)
         nav_layout.addWidget(self.workspace_nav, 1)
-        body_shell.addWidget(nav_frame, 0)
+        if body_shell is not None:
+            body_shell.addWidget(nav_frame, 0)
 
         workspace_host = QWidget()
         workspace_host.setObjectName("WorkspaceHost")
@@ -1542,8 +1760,22 @@ class MainWindow(QWidget):
         workspace_layout.setSpacing(0)
         self.workspace_stack = QStackedWidget()
         workspace_layout.addWidget(self.workspace_stack, 1)
-        body_shell.addWidget(workspace_host, 1)
-        body_layout.addLayout(body_shell, 1)
+        if macos:
+            workspace_layout.setContentsMargins(24, 20, 24, 24)
+            split_view = QSplitter(Qt.Orientation.Horizontal)
+            split_view.setObjectName("MacSplitView")
+            split_view.setChildrenCollapsible(False)
+            split_view.setHandleWidth(1)
+            split_view.addWidget(nav_frame)
+            split_view.addWidget(workspace_host)
+            split_view.setSizes([220, 960])
+            split_view.setStretchFactor(0, 0)
+            split_view.setStretchFactor(1, 1)
+            body_layout.addWidget(split_view, 1)
+            self._macos_glass_targets.append((nav_frame, "clear", 0.0))
+        else:
+            body_shell.addWidget(workspace_host, 1)
+            body_layout.addLayout(body_shell, 1)
 
         tabs_card = QFrame()
         tabs_card.setObjectName("ConfigCard")
@@ -1578,7 +1810,13 @@ class MainWindow(QWidget):
             self._tab_platform_ids.append(card.platform_id)
             self.platform_tabs.addTab(page, title_text)
 
-        qq_card = PlatformCard("qq", "QQ音乐", "运行期解密，开始任务前会检查 QQ 音乐进程。")
+        qq_card = PlatformCard(
+            "qq",
+            "QQ音乐",
+            "QTag/V1 文件离线解密；musicex 文件会使用已登录的 QQ 音乐信息获取 EKey。"
+            if platform.system() == "Darwin"
+            else "运行期解密，开始任务前会检查 QQ 音乐进程。",
+        )
         qq_card.add_format_combo("mflac", "mflac 输出格式", QQ_RULE_FORMATS)
         qq_card.add_format_combo("mgg", "mgg 输出格式", QQ_RULE_FORMATS)
         qq_card.add_format_combo("mmp4", "mmp4 输出格式", QQ_RULE_FORMATS)
@@ -1813,7 +2051,11 @@ class MainWindow(QWidget):
         quick_layout.setSpacing(10)
         quick_title = QLabel("快速开始")
         quick_title.setObjectName("SectionTitle")
-        quick_body = QLabel("像 Steam++ 一样，常用功能在总览页给出直接入口。")
+        quick_body = QLabel(
+            "常用任务集中在这里，也可以通过边栏随时切换。"
+            if platform.system() == "Darwin"
+            else "像 Steam++ 一样，常用功能在总览页给出直接入口。"
+        )
         quick_body.setObjectName("MutedText")
         quick_body.setWordWrap(True)
         quick_row = QHBoxLayout()
@@ -1870,7 +2112,8 @@ class MainWindow(QWidget):
         platform_health_body.setWordWrap(True)
         platform_health_layout.addWidget(platform_health_title)
         platform_health_layout.addWidget(platform_health_body)
-        for title_text, desc_text in (("QQ音乐", "运行期解密，需要检测进程"), ("酷我音乐", "kwmusic.exe 运行时可直接进入解密"), ("酷狗音乐", "离线文件解密，封装规则不同"), ("网易云音乐", "直接处理 ncm 文件")):
+        qq_overview_text = "QMC2 离线解密，musicex 自动获取 EKey" if platform.system() == "Darwin" else "运行期解密，需要检测进程"
+        for title_text, desc_text in (("QQ音乐", qq_overview_text), ("酷我音乐", "kwmusic.exe 运行时可直接进入解密"), ("酷狗音乐", "离线文件解密，封装规则不同"), ("网易云音乐", "直接处理 ncm 文件")):
             item_frame = QFrame()
             item_frame.setObjectName("MiniCard")
             item_layout = QVBoxLayout(item_frame)
@@ -1913,8 +2156,9 @@ class MainWindow(QWidget):
         self.workspace_nav.addItem("output", FIF.FOLDER, "打开输出目录", onClick=self._open_output_dir, selectable=False, position=NavigationItemPosition.BOTTOM)
 
         self.setStyleSheet(build_app_stylesheet())
-        for widget in (hero_card, shared_card, tabs_card, transcode_hint_card, log_card, overview_note):
-            apply_card_shadow(widget)
+        if not macos:
+            for widget in (hero_card, shared_card, tabs_card, transcode_hint_card, log_card, overview_note):
+                apply_card_shadow(widget)
         self._switch_workspace_page("overview")
 
     def _connect_signals(self) -> None:
@@ -1925,6 +2169,11 @@ class MainWindow(QWidget):
         self.save_button.clicked.connect(self._save_config_from_widgets)
         self.reload_button.clicked.connect(self._reload_config)
         self.open_output_button.clicked.connect(self._open_output_dir)
+        if platform.system() == "Darwin":
+            self.sidebar_toggle_button.clicked.connect(
+                lambda: self.sidebar_frame.setVisible(not self.sidebar_frame.isVisible())
+            )
+            self.toolbar_output_button.clicked.connect(self._open_output_dir)
         for platform_id, card in self._cards.items():
             card.input_field.button.clicked.connect(
                 lambda _=False, pid=platform_id: self._choose_path(self._cards[pid].input_field))
@@ -1970,6 +2219,14 @@ class MainWindow(QWidget):
             return
         self.workspace_stack.setCurrentWidget(page)
         self.workspace_nav.setCurrentItem(key)
+        if platform.system() == "Darwin" and hasattr(self, "toolbar_title_label"):
+            self.toolbar_title_label.setText({
+                "overview": "总览",
+                "decrypt": "平台解密",
+                "transcode": "批量转码",
+                "settings": "设置",
+                "logs": "日志",
+            }.get(key, PROJECT_NAME_EN))
 
     def _platform_title(self, platform_id: str) -> str:
         return {"qq": "QQ音乐", "kuwo": "酷我音乐", "kugou": "酷狗音乐", "netease": "网易云音乐"}[platform_id]
@@ -2627,9 +2884,16 @@ class MainWindow(QWidget):
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setStyle("Fusion")
     if platform.system() == "Darwin":
-        setTheme(Theme.DARK)
+        native_style = next((name for name in QStyleFactory.keys() if name.lower() in {"macos", "macintosh"}), None)
+        if native_style:
+            app.setStyle(native_style)
+        setTheme(Theme.AUTO)
+        system_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+        system_font.setPointSizeF(13.0)
+        app.setFont(system_font)
+    else:
+        app.setStyle("Fusion")
     paths = RuntimePaths.discover()
     icon_path = paths.bundle_dir / "封面" / ("封面.png" if platform.system() == "Darwin" else "封面.ico")
     if icon_path.exists():

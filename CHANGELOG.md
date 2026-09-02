@@ -1,10 +1,3 @@
-# [1.5.0](https://github.com/yc004/QQKWKG-TriMusicDecrypt-mac/compare/v1.4.4...v1.5.0) (2026-08-25)
-
-
-### Features
-
-* **macOS:** add native SwiftUI interface and DMG release ([acb2770](https://github.com/yc004/QQKWKG-TriMusicDecrypt-mac/commit/acb277087b2121b66cf9a5253543cb597ec8ea5d))
-
 # Changelog
 
 All notable changes to this project will be documented in this file.

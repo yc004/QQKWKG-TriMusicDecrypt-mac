@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const {
   capture,
+  copyRecursive,
   ensureDir,
   ensureEmptyDir,
   ensureFile,
@@ -35,24 +36,21 @@ const swiftEnvironment = {
   CLANG_MODULE_CACHE_PATH: path.join(buildRoot, "clang-module-cache"),
   SWIFTPM_MODULECACHE_OVERRIDE: path.join(buildRoot, "swift-module-cache"),
 };
-const macOSSDK = capture("xcrun", ["--sdk", "macosx", "--show-sdk-path"], { cwd: rootDir, env: swiftEnvironment });
-swiftEnvironment.SDKROOT = macOSSDK;
-const swiftOutputDir = path.join(buildRoot, "swift");
-const swiftExecutable = path.join(swiftOutputDir, "QKKDecrypt-UI");
-fs.mkdirSync(swiftOutputDir, { recursive: true });
-const swiftSources = fs.readdirSync(path.join(packageDir, "Sources"))
-  .filter((name) => name.endsWith(".swift"))
-  .sort()
-  .map((name) => path.join(packageDir, "Sources", name));
-run("xcrun", [
-  "swiftc", "-O", "-whole-module-optimization",
-  "-sdk", macOSSDK,
-  "-target", "arm64-apple-macosx15.0",
-  ...swiftSources,
-  "-o", swiftExecutable,
+const swiftBuildDir = path.join(buildRoot, "swift-build");
+const swiftBuildArgs = [
+  "build", "--package-path", packageDir,
+  "--scratch-path", swiftBuildDir,
+  "--configuration", "release",
+  "--product", "QKKDecrypt-UI",
+];
+run("xcrun", ["swift", ...swiftBuildArgs], { cwd: rootDir, env: swiftEnvironment });
+const swiftBinDir = capture("xcrun", [
+  "swift", "build", "--package-path", packageDir,
+  "--scratch-path", swiftBuildDir,
+  "--configuration", "release",
+  "--show-bin-path",
 ], { cwd: rootDir, env: swiftEnvironment });
-
-const builtExecutable = swiftExecutable;
+const builtExecutable = path.join(swiftBinDir, "QKKDecrypt-UI");
 ensureFile(builtExecutable, "SwiftUI executable");
 ensureFile(path.join(consoleDist, "QKKDecrypt"), "embedded Python backend");
 
@@ -61,6 +59,11 @@ fs.mkdirSync(resourcesDir, { recursive: true });
 fs.copyFileSync(builtExecutable, path.join(macOSDir, "QKKDecrypt-UI"));
 fs.copyFileSync(path.join(consoleDist, "QKKDecrypt"), path.join(resourcesDir, "QKKDecryptBackend"));
 fs.copyFileSync(path.join(packageDir, "Info.plist"), path.join(contentsDir, "Info.plist"));
+for (const entry of fs.readdirSync(swiftBinDir, { withFileTypes: true })) {
+  if (entry.isDirectory() && entry.name.endsWith(".bundle")) {
+    copyRecursive(path.join(swiftBinDir, entry.name), path.join(resourcesDir, entry.name));
+  }
+}
 fs.chmodSync(path.join(macOSDir, "QKKDecrypt-UI"), 0o755);
 fs.chmodSync(path.join(resourcesDir, "QKKDecryptBackend"), 0o755);
 

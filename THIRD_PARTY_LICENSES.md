@@ -58,6 +58,24 @@
 - 直接把来源项目代码默认视为可任意再授权代码
 - 在未重新核验许可证前，把外部项目代码大段并入再重新发布
 
+### 5. PermissionFlow
+
+- macOS 原生界面的完全磁盘访问权限引导使用 `PermissionFlow 2.11.2`
+- 用途包括系统设置深链、跟随设置窗口的浮动引导，以及将当前 `.app` 作为 AppKit 原生拖拽源
+- 上游采用 MIT License
+
+参考：
+- https://github.com/jaywcjlove/PermissionFlow
+
+### 6. FullDiskAccess
+
+- macOS 原生界面使用 `inket/FullDiskAccess` 探测完全磁盘访问状态，并让 macOS 为当前应用登记对应权限条目
+- 依赖固定到提交 `51d8465ad2babb0710996a39fe183d27dcd72634`
+- 上游采用 MIT License
+
+参考：
+- https://github.com/inket/FullDiskAccess
+
 ## 推荐表述
 
 建议在 README、发布页、安装包说明里统一使用类似口径：

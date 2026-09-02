@@ -9,6 +9,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-09-02
+
+### Added
+
+- Added a compact multi-file drag-and-drop workflow that automatically identifies QQ Music, Kuwo, Kugou and NetEase formats.
+- Added sequential mixed-platform batch decryption with current/total task progress and aggregated native error alerts.
+- Added a native Full Disk Access onboarding flow using PermissionFlow and FullDiskAccess for QQ Music login data.
+
+### Changed
+
+- Redesigned the macOS main window as a lightweight single-screen application using native SwiftUI, AppKit and Liquid Glass components.
+- Moved live preparation, decryption, completion and failure states onto the main screen and removed the separate batch entry point.
+- Updated macOS packaging to resolve Swift Package dependencies and include their resource bundles.
+
+### Validation
+
+- Verified mixed QQ Music and NetEase tasks progress from `1/2` to `2/2` in the real macOS interface.
+- Verified native error dialogs aggregate per-file backend failure reasons.
+- Passed 9 automated platform/decryption tests and strict bundle signature verification.
+
 ## [1.5.0] - 2026-08-25
 
 ### Added

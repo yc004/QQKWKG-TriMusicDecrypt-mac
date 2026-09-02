@@ -50,6 +50,15 @@ enum MusicPlatform: String, CaseIterable, Identifiable {
     }
 }
 
+struct AutomaticDecryptItem: Identifiable, Equatable {
+    let platform: MusicPlatform
+    let path: String
+    let fileCount: Int
+
+    var id: String { "\(platform.rawValue)|\(path)" }
+    var displayName: String { URL(fileURLWithPath: path).lastPathComponent }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var selection: Workspace? = .workbench
@@ -73,8 +82,24 @@ final class AppModel: ObservableObject {
     @Published var workerCount = 2
     @Published var isRunning = false
     @Published var statusText = "待命"
+    @Published var taskStatusDetail = ""
+    @Published var hasStartedTask = false
     @Published var logs = ""
     @Published var lastError: String?
+    @Published var automaticInputPath = ""
+    @Published var automaticInputItems: [AutomaticDecryptItem] = []
+    @Published var detectedPlatform: MusicPlatform?
+    @Published var detectedFileCount = 0
+
+    private var activeTaskKind: TaskKind?
+    private var latestTaskLines: [String] = []
+    private var pendingAutomaticJobs: [AutomaticDecryptItem] = []
+    private var automaticJobTotal = 0
+    private var automaticJobIndex = 0
+    private var automaticFailedJobCount = 0
+    private var automaticFailureReasons: [String] = []
+    private var isAutomaticBatch = false
+    private var ignoresNextFinish = false
 
     let backend = BackendRunner()
     let formats = ["auto", "flac", "m4a", "mp3", "wav"]
@@ -83,13 +108,18 @@ final class AppModel: ObservableObject {
 
     init() {
         backend.onLine = { [weak self] line in
-            Task { @MainActor in self?.appendLog(line) }
+            Task { @MainActor in self?.handleBackendLine(line) }
         }
         backend.onFinish = { [weak self] code in
             Task { @MainActor in
-                self?.isRunning = false
-                self?.statusText = code == 0 ? "已完成" : "失败（退出码 \(code)）"
-                if code != 0 { self?.selection = .activity }
+                guard let self else { return }
+                if self.ignoresNextFinish {
+                    self.ignoresNextFinish = false
+                } else if self.isAutomaticBatch {
+                    self.finishAutomaticJob(exitCode: code)
+                } else {
+                    self.finishTask(exitCode: code)
+                }
             }
         }
         Task { await loadConfiguration() }
@@ -100,6 +130,47 @@ final class AppModel: ObservableObject {
         logs += "[\(stamp)] \(line)\n"
     }
 
+    private func handleBackendLine(_ line: String) {
+        latestTaskLines.append(line)
+        if latestTaskLines.count > 80 { latestTaskLines.removeFirst(latestTaskLines.count - 80) }
+        if isRunning { taskStatusDetail = line }
+        appendLog(line)
+    }
+
+    private func finishTask(exitCode: Int32) {
+        let operation = activeTaskKind == .transcode ? "转码" : "解密"
+        isRunning = false
+        if exitCode == 0 {
+            statusText = "\(operation)完成"
+            taskStatusDetail = "处理已完成，可以打开输出目录查看文件。"
+        } else {
+            statusText = "\(operation)失败"
+            let reason = preferredFailureReason()
+            taskStatusDetail = reason.isEmpty ? "后端进程退出，错误代码：\(exitCode)" : reason
+            lastError = "\(operation)失败：\(taskStatusDetail)"
+        }
+        activeTaskKind = nil
+    }
+
+    private func preferredFailureReason() -> String {
+        let preferred = latestTaskLines.last { line in
+            let lower = line.lowercased()
+            return lower.contains("failed:")
+                || lower.contains("qq_decrypt_failed")
+                || lower.contains("decrypt_failed")
+                || lower.contains("解密失败")
+        } ?? latestTaskLines.last { line in
+            let lower = line.lowercased()
+            return !lower.contains("[timing]")
+                && (lower.contains("error") || lower.contains("失败") || lower.contains(" reason="))
+        }
+        guard let preferred else { return "" }
+        if let marker = preferred.range(of: "| qkkdecrypt |") {
+            return String(preferred[marker.upperBound...]).trimmingCharacters(in: .whitespaces)
+        }
+        return preferred.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func chooseInput(for platform: MusicPlatform) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -108,6 +179,174 @@ final class AppModel: ObservableObject {
         if panel.runModal() == .OK, let url = panel.url {
             inputPaths[platform] = url.path
         }
+    }
+
+    func chooseAutomaticInput() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = "选择"
+        panel.message = "选择一个或多个加密音乐文件或文件夹"
+        if panel.runModal() == .OK {
+            _ = acceptAutomaticInputs(panel.urls)
+        }
+    }
+
+    @discardableResult
+    func acceptAutomaticInput(_ url: URL) -> Bool {
+        acceptAutomaticInputs([url])
+    }
+
+    @discardableResult
+    func acceptAutomaticInputs(_ urls: [URL]) -> Bool {
+        var additions: [AutomaticDecryptItem] = []
+        var ignoredNames: [String] = []
+        for url in urls {
+            let normalizedURL = url.standardizedFileURL
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: normalizedURL.path, isDirectory: &isDirectory) else {
+                ignoredNames.append(normalizedURL.lastPathComponent)
+                continue
+            }
+            let result = isDirectory.boolValue
+                ? detectPlatforms(in: normalizedURL)
+                : detectSingleFile(normalizedURL)
+            guard !result.isEmpty else {
+                ignoredNames.append(normalizedURL.lastPathComponent)
+                continue
+            }
+            for (detected, count) in result {
+                additions.append(AutomaticDecryptItem(platform: detected, path: normalizedURL.path, fileCount: count))
+            }
+        }
+
+        let existingIDs = Set(automaticInputItems.map(\.id))
+        additions = additions.filter { !existingIDs.contains($0.id) }
+        guard !additions.isEmpty else {
+            lastError = ignoredNames.isEmpty
+                ? "这些文件已经在列表中。"
+                : "未识别到支持的加密音乐格式。支持 QQ 音乐、酷我音乐、酷狗音乐和网易云音乐的加密文件。"
+            return false
+        }
+
+        automaticInputItems.append(contentsOf: additions)
+        refreshAutomaticInputSummary()
+        hasStartedTask = false
+        taskStatusDetail = ""
+        statusText = "已添加 \(detectedFileCount) 个文件"
+        for item in additions {
+            appendLog("自动识别：\(item.displayName) → \(item.platform.title)，\(item.fileCount) 个文件。")
+        }
+        if !ignoredNames.isEmpty {
+            appendLog("已忽略不支持的项目：\(ignoredNames.joined(separator: "、"))")
+        }
+        return true
+    }
+
+    func removeAutomaticInput(_ item: AutomaticDecryptItem) {
+        guard !isRunning else { return }
+        automaticInputItems.removeAll { $0.id == item.id }
+        refreshAutomaticInputSummary()
+        hasStartedTask = false
+        taskStatusDetail = ""
+        statusText = automaticInputItems.isEmpty ? "待命" : "已添加 \(detectedFileCount) 个文件"
+    }
+
+    var hasQQAutomaticInput: Bool {
+        automaticInputItems.contains { $0.platform == .qq }
+    }
+
+    private func refreshAutomaticInputSummary() {
+        automaticInputPath = automaticInputItems.first?.path ?? ""
+        detectedPlatform = automaticInputItems.first?.platform
+        detectedFileCount = automaticInputItems.reduce(0) { $0 + $1.fileCount }
+        if let first = automaticInputItems.first {
+            platform = first.platform
+            inputPaths[first.platform] = first.path
+        }
+    }
+
+    func clearAutomaticInput() {
+        automaticInputPath = ""
+        automaticInputItems = []
+        detectedPlatform = nil
+        detectedFileCount = 0
+        hasStartedTask = false
+        taskStatusDetail = ""
+        statusText = "待命"
+    }
+
+    func startAutomaticDecrypt() {
+        guard !isRunning, !automaticInputItems.isEmpty else {
+            if automaticInputItems.isEmpty { lastError = "请先拖入支持的加密音乐文件或文件夹。" }
+            return
+        }
+        isRunning = true
+        hasStartedTask = true
+        activeTaskKind = .decrypt
+        latestTaskLines = []
+        pendingAutomaticJobs = automaticInputItems
+        automaticJobTotal = pendingAutomaticJobs.count
+        automaticJobIndex = 0
+        automaticFailedJobCount = 0
+        automaticFailureReasons = []
+        isAutomaticBatch = true
+        statusText = "正在准备批量解密"
+        taskStatusDetail = "正在保存配置并创建 \(automaticJobTotal) 个解密任务…"
+        appendLog("开始批量解密，共 \(detectedFileCount) 个文件、\(automaticJobTotal) 个任务。")
+        Task {
+            await saveConfiguration()
+            startNextAutomaticJob()
+        }
+    }
+
+    private func startNextAutomaticJob() {
+        guard isAutomaticBatch else { return }
+        guard !pendingAutomaticJobs.isEmpty else {
+            finishAutomaticBatch()
+            return
+        }
+
+        let job = pendingAutomaticJobs.removeFirst()
+        automaticJobIndex += 1
+        platform = job.platform
+        inputPaths[job.platform] = job.path
+        latestTaskLines = []
+        statusText = "正在解密 \(automaticJobIndex)/\(automaticJobTotal)"
+        taskStatusDetail = "\(job.platform.title) · \(job.displayName) · \(job.fileCount) 个文件"
+        appendLog("批量任务 [\(automaticJobIndex)/\(automaticJobTotal)]：\(job.platform.title) · \(job.displayName)")
+        backend.start(arguments: decryptArguments(platform: job.platform, input: job.path))
+    }
+
+    private func finishAutomaticJob(exitCode: Int32) {
+        if exitCode != 0 {
+            automaticFailedJobCount += 1
+            let reason = preferredFailureReason()
+            automaticFailureReasons.append(
+                reason.isEmpty ? "任务 \(automaticJobIndex) 失败（错误代码 \(exitCode)）" : reason
+            )
+        }
+        startNextAutomaticJob()
+    }
+
+    private func finishAutomaticBatch() {
+        isAutomaticBatch = false
+        isRunning = false
+        activeTaskKind = nil
+        if automaticFailureReasons.isEmpty {
+            statusText = "批量解密完成"
+            taskStatusDetail = "已处理 \(detectedFileCount) 个文件，可以打开输出目录查看结果。"
+            appendLog("批量解密完成。")
+        } else {
+            var seenReasons: Set<String> = []
+            let uniqueReasons = automaticFailureReasons.filter { seenReasons.insert($0).inserted }
+            statusText = automaticFailedJobCount == automaticJobTotal ? "批量解密失败" : "批量解密部分失败"
+            taskStatusDetail = "\(automaticFailedJobCount) 个任务未完成，请查看错误提示。"
+            lastError = "批量解密遇到错误：\n\n" + uniqueReasons.prefix(6).joined(separator: "\n")
+            appendLog("批量解密结束，失败 \(automaticFailedJobCount) 个任务。")
+        }
+        pendingAutomaticJobs = []
     }
 
     func chooseDirectory(_ assign: (String) -> Void) {
@@ -152,28 +391,38 @@ final class AppModel: ObservableObject {
             lastError = "请先选择输入文件或目录。"
             return
         }
+        isRunning = true
+        hasStartedTask = true
+        activeTaskKind = .decrypt
+        latestTaskLines = []
+        statusText = "正在准备解密"
+        taskStatusDetail = "正在保存配置并启动解密引擎…"
+        appendLog("开始 \(platform.title) 解密任务。")
         Task {
             await saveConfiguration()
-            var arguments = [platform.rawValue, "decrypt", "--input", input]
-            if !outputDirectory.isEmpty { arguments += ["--output", outputDirectory] }
-            if !recursive { arguments.append("--no-recursive") }
-            arguments.append(transcodeEnabled ? "--transcode" : "--no-transcode")
-            arguments.append(embedCover ? "--embed-cover" : "--no-embed-cover")
-            arguments.append(supplementAlbum ? "--supplement-album" : "--no-supplement-album")
-            let format = targetFormats[platform, default: "auto"]
-            switch platform {
-            case .qq:
-                let resolved = format == "auto" ? "flac" : format
-                arguments += ["--format-mflac", resolved, "--format-mgg", resolved, "--format-mmp4", resolved]
-            case .kuwo: arguments += ["--format-kwm", format]
-            case .kugou: arguments += ["--format-kgma", format, "--format-kgg", format]
-            case .netease: arguments += ["--format-ncm", format]
-            }
-            isRunning = true
             statusText = "正在解密"
-            appendLog("开始 \(platform.title) 解密任务。")
-            backend.start(arguments: arguments)
+            taskStatusDetail = "解密引擎已启动，正在处理文件…"
+            backend.start(arguments: decryptArguments(platform: platform, input: input))
         }
+    }
+
+    private func decryptArguments(platform: MusicPlatform, input: String) -> [String] {
+        var arguments = [platform.rawValue, "decrypt", "--input", input]
+        if !outputDirectory.isEmpty { arguments += ["--output", outputDirectory] }
+        if !recursive { arguments.append("--no-recursive") }
+        arguments.append(transcodeEnabled ? "--transcode" : "--no-transcode")
+        arguments.append(embedCover ? "--embed-cover" : "--no-embed-cover")
+        arguments.append(supplementAlbum ? "--supplement-album" : "--no-supplement-album")
+        let format = targetFormats[platform, default: "auto"]
+        switch platform {
+        case .qq:
+            let resolved = format == "auto" ? "flac" : format
+            arguments += ["--format-mflac", resolved, "--format-mgg", resolved, "--format-mmp4", resolved]
+        case .kuwo: arguments += ["--format-kwm", format]
+        case .kugou: arguments += ["--format-kgma", format, "--format-kgg", format]
+        case .netease: arguments += ["--format-ncm", format]
+        }
+        return arguments
     }
 
     func startTranscode() {
@@ -191,16 +440,61 @@ final class AppModel: ObservableObject {
         }
         arguments += ["--rule", rule]
         isRunning = true
+        hasStartedTask = true
+        activeTaskKind = .transcode
+        latestTaskLines = []
         statusText = "正在转码"
+        taskStatusDetail = "转码引擎已启动，正在处理文件…"
         appendLog("开始批量转码任务。")
         backend.start(arguments: arguments)
     }
 
     func stop() {
+        ignoresNextFinish = isRunning
+        isAutomaticBatch = false
+        pendingAutomaticJobs = []
         backend.stop()
         isRunning = false
         statusText = "已停止"
+        taskStatusDetail = "任务已由用户停止。"
+        activeTaskKind = nil
         appendLog("用户已停止任务。")
+    }
+
+    private func detectSingleFile(_ url: URL) -> [MusicPlatform: Int] {
+        guard let platform = platformForFileName(url.lastPathComponent) else { return [:] }
+        return [platform: 1]
+    }
+
+    private func detectPlatforms(in directory: URL) -> [MusicPlatform: Int] {
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey]
+        let options: FileManager.DirectoryEnumerationOptions = recursive
+            ? [.skipsHiddenFiles, .skipsPackageDescendants]
+            : [.skipsHiddenFiles, .skipsPackageDescendants, .skipsSubdirectoryDescendants]
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: Array(keys),
+            options: options
+        ) else { return [:] }
+
+        var counts: [MusicPlatform: Int] = [:]
+        for case let fileURL as URL in enumerator {
+            guard (try? fileURL.resourceValues(forKeys: keys).isRegularFile) == true,
+                  let platform = platformForFileName(fileURL.lastPathComponent) else { continue }
+            counts[platform, default: 0] += 1
+        }
+        return counts
+    }
+
+    private func platformForFileName(_ fileName: String) -> MusicPlatform? {
+        let name = fileName.lowercased()
+        if [".mflac", ".mgg", ".mmp4"].contains(where: name.hasSuffix) { return .qq }
+        if name.hasSuffix(".kwm") { return .kuwo }
+        if [".kgm", ".kgma", ".kgg", ".vpr", ".kgm.flac", ".vpr.flac"].contains(where: name.hasSuffix) {
+            return .kugou
+        }
+        if name.hasSuffix(".ncm") { return .netease }
+        return nil
     }
 
     private func apply(configuration: [String: Any]) {

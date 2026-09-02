@@ -1,0 +1,23 @@
+{
+  "originHash" : "3c7b66aa09b691a27b5bc53d2e55ac3167bdd815aae81441eaf93c1e0a78b98e",
+  "pins" : [
+    {
+      "identity" : "fulldiskaccess",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/inket/FullDiskAccess.git",
+      "state" : {
+        "revision" : "51d8465ad2babb0710996a39fe183d27dcd72634"
+      }
+    },
+    {
+      "identity" : "permissionflow",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jaywcjlove/PermissionFlow.git",
+      "state" : {
+        "revision" : "2f2a4b76b1eb2ff7ab815b977be8229853f10bf8",
+        "version" : "2.11.2"
+      }
+    }
+  ],
+  "version" : 3
+}

@@ -46,13 +46,13 @@ macOS 适配保持 `Presentation / Application / Infrastructure` 三层结构和
 
 ### 下载与安装
 
-- [QKKDecrypt v1.5.0 Release](https://github.com/yc004/QQKWKG-TriMusicDecrypt-mac/releases/tag/v1.5.0)
+- [QKKDecrypt v1.6.0 Release](https://github.com/yc004/QQKWKG-TriMusicDecrypt-mac/releases/tag/v1.6.0)
 - `QKKDecrypt-UI-macOS-arm64.zip`：带界面的 Apple Silicon 版本，推荐普通用户使用
 - `QKKDecrypt-macOS-arm64.zip`：Apple Silicon 命令行版本
 
 解压 UI 包后，将 `QKKDecrypt-UI.app` 移入“应用程序”并启动。该版本已在 Apple Silicon macOS 上完成实际解密、界面启动、原生库加载、代码签名完整性和 9 项自动化测试验证。
 
-QQ 音乐 QTag/V1 文件可直接离线处理。若 musicex 文件提示权限不足，请保证 macOS QQ 音乐已经登录，并在“系统设置 → 隐私与安全性 → 完全磁盘访问权限”中允许 `QKKDecrypt-UI`，然后彻底退出并重新打开应用。
+QQ 音乐 QTag/V1 文件可直接离线处理。musicex 文件需要读取已登录 QQ 音乐客户端容器中的登录信息；请先将 `QKKDecrypt-UI.app` 移入“应用程序”。识别到 QQ 文件后点击“授权…”，应用会先向 macOS 注册当前应用的权限状态，再打开“系统设置 → 隐私与安全性 → 完全磁盘访问权限”，并在设置窗口旁显示原生拖拽浮窗。将浮窗中的 QKKDecrypt 应用卡片拖入设置列表、启用右侧开关，然后彻底退出并重新打开应用。权限引导使用开源 [FullDiskAccess](https://github.com/inket/FullDiskAccess) 的 TCC 探测与 [PermissionFlow](https://github.com/jaywcjlove/PermissionFlow) 的 AppKit 原生拖拽方案；临时签名构建更新后可能需要重新授权。
 
 ### 从源码构建
 
@@ -77,9 +77,9 @@ QQ 音乐的 Windows 运行期链仍保留不变，macOS 改用格式兼容的 Q
 
 ## UI 路线
 
-macOS 主界面采用真正的 **SwiftUI + AppKit** 原生架构，不再通过 Qt 模拟 Apple 外观。界面使用系统 `NavigationSplitView`、Toolbar、Form、GroupBox、Alert、`NSOpenPanel`、SF Symbols、动态系统色、辅助功能语义和键盘快捷键；在 macOS 26 及以上由系统标准组件自动采用 Liquid Glass，任务状态、文件选择、任务记录操作与底部主操作区使用 `GlassEffectContainer`、`glassEffect`、`glass` 和 `glassProminent` 构成统一的悬浮功能层。步骤卡片与日志正文仍使用标准内容层，确保层级和可读性；旧版 macOS 会自动降级为系统 Material 与 bordered 控件。设计依据为 Apple 官方 [Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/)、[Materials](https://developer.apple.com/design/human-interface-guidelines/materials) 与 [Adopting Liquid Glass](https://developer.apple.com/documentation/TechnologyOverviews/adopting-liquid-glass)。
+macOS 主界面采用真正的 **SwiftUI + AppKit** 原生架构，不再通过 Qt 模拟 Apple 外观。界面使用系统 Toolbar、Form、Alert、`NSOpenPanel`、原生拖放、SF Symbols、动态系统色、辅助功能语义和键盘快捷键；在 macOS 26 及以上由系统标准组件自动采用 Liquid Glass，任务状态、文件选择和操作按钮使用 `GlassEffectContainer`、`glassEffect`、`glass` 和 `glassProminent` 构成统一的功能层。旧版 macOS 会自动降级为系统 Material 与 bordered 控件。设计依据为 Apple 官方 [Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/)、[Materials](https://developer.apple.com/design/human-interface-guidelines/materials) 与 [Adopting Liquid Glass](https://developer.apple.com/documentation/TechnologyOverviews/adopting-liquid-glass)。
 
-主窗口采用以任务为中心的连续工作流：边栏只保留“工作台”和“任务记录”，解密与批量转码在同一工作台内切换；任务类型、音乐平台和转码格式在 macOS 27 使用系统 `Picker(.tabs)` 滑动胶囊，由系统负责选中形态、动画和辅助功能，旧系统自动降级为原生 `Picker(.segmented)`。布尔配置统一使用系统 switch 开关。输入输出、处理方式和执行操作按步骤排列，高级参数默认收起，运行状态与停止操作固定显示在窗口底部。低频全局配置使用标准 macOS `⌘,` 设置窗口，减少主流程中的跳转和重复配置。
+主窗口采用统一的批量解密工作流：一次可以拖入或选择多个加密音乐文件和文件夹，应用根据扩展名自动识别 QQ 音乐、酷我音乐、酷狗音乐或网易云音乐，并在主页列出待处理项目。混合平台文件夹会自动拆分为对应平台的顺序任务，直接复用既有解密适配器，不复制或移动源文件。主流程只保留输出位置与“开始解密”；点击后主页立即显示准备状态以及 `当前任务/总任务` 进度，完成或失败状态继续留在主页，失败会使用原生弹窗汇总后端原因。运行日志收纳到“更多操作”，原来的独立批量界面不再显示，低频默认值继续放在标准 macOS `⌘,` 设置窗口。
 
 SwiftUI 前端通过内嵌的 `QKKDecryptBackend` 薄桥接调用原有 Python CLI：平台解密、批量转码、配置格式、输出路径和运行时适配仍由既有 Application / Infrastructure 层负责。Windows 继续构建原 PySide6 UI，功能逻辑不分叉。
 

@@ -1,4 +1,6 @@
 import AppKit
+import FullDiskAccess
+import PermissionFlow
 import SwiftUI
 
 @main
@@ -11,7 +13,10 @@ struct QKKDecryptApp: App {
             ContentView()
                 .environmentObject(model)
                 .toggleStyle(.switch)
-                .frame(minWidth: 980, minHeight: 680)
+                .frame(
+                    minWidth: 560, idealWidth: 620, maxWidth: 680,
+                    minHeight: 380, idealHeight: 400, maxHeight: 400
+                )
                 .alert("本软件为免费软件", isPresented: Binding(
                     get: { !didAcknowledgeFreeNotice },
                     set: { if !$0 { didAcknowledgeFreeNotice = true } }
@@ -31,12 +36,13 @@ struct QKKDecryptApp: App {
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
-        .defaultSize(width: 1180, height: 760)
+        .defaultSize(width: 620, height: 400)
+        .windowResizability(.contentSize)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("打开输出目录") { model.openOutputDirectory() }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
-                Button("查看任务记录") { model.selection = .activity }
+                Button("查看运行日志") { model.selection = .activity }
                     .keyboardShortcut("l", modifiers: [.command, .shift])
             }
         }
@@ -45,8 +51,9 @@ struct QKKDecryptApp: App {
             SettingsView()
                 .environmentObject(model)
                 .toggleStyle(.switch)
-                .frame(width: 620, height: 500)
+                .frame(width: 560, height: 440)
         }
+
     }
 }
 
@@ -54,17 +61,7 @@ struct ContentView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        NavigationSplitView {
-            List(Workspace.allCases, selection: $model.selection) { item in
-                Label(item.title, systemImage: item.symbol).tag(item)
-            }
-            .navigationTitle("QKKDecrypt")
-            .safeAreaInset(edge: .bottom) {
-                Text("免费开源 · 仅供学习交流")
-                    .font(.caption2).foregroundStyle(.tertiary).padding(.vertical, 10)
-            }
-            .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
-        } detail: {
+        NavigationStack {
             Group {
                 switch model.selection ?? .workbench {
                 case .workbench: WorkbenchView()
@@ -77,6 +74,18 @@ struct ContentView: View {
                     StatusIndicator(text: model.statusText, running: model.isRunning)
                     Button("打开输出目录", systemImage: "folder") { model.openOutputDirectory() }
                         .help("在访达中打开输出目录")
+                    Menu("更多操作", systemImage: "ellipsis.circle") {
+                        Button("QQ 音乐访问权限…", systemImage: "hand.raised") {
+                            presentFullDiskAccessGuide()
+                        }
+                        Button("运行日志…", systemImage: "text.alignleft") {
+                            model.selection = .activity
+                        }
+                        Divider()
+                        SettingsLink {
+                            Label("设置…", systemImage: "gearshape")
+                        }
+                    }
                 }
             }
         }
@@ -85,50 +94,271 @@ struct ContentView: View {
 
 struct WorkbenchView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var advancedOptionsExpanded = false
-
-    private var readyToRun: Bool {
-        model.taskKind == .decrypt
-            ? !model.inputPaths[model.platform, default: ""].isEmpty
-            : !model.transcodeInput.isEmpty
-    }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            WorkbenchBackdrop()
-                .ignoresSafeArea()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("今天要处理什么？").font(.largeTitle.bold())
-                        Text("按顺序完成下面的步骤，其他配置会自动沿用上一次的选择。")
-                            .font(.title3).foregroundStyle(.secondary)
-                    }
-                    NativeActivityPicker(options: TaskKind.allCases, selection: $model.taskKind) { item in
-                        Label(item.title, systemImage: item.symbol)
-                    }
-                    .frame(width: 440)
+        ZStack {
+            WorkbenchBackdrop().ignoresSafeArea()
+            VStack(spacing: 16) {
+                VStack(spacing: 4) {
+                    Text("拖入音乐，批量解密")
+                        .font(.title2.bold())
+                    Text("一次可添加多个文件或文件夹，平台和格式会自动识别。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
 
-                    if model.taskKind == .decrypt {
-                        DecryptWorkflow(advancedOptionsExpanded: $advancedOptionsExpanded)
+                AutomaticDropZone()
+
+                if !model.automaticInputItems.isEmpty {
+                    HStack(spacing: 12) {
+                        Label("输出位置", systemImage: "folder")
+                            .font(.headline)
+                        Text(model.outputDirectory.isEmpty ? "使用默认输出目录" : model.outputDirectory)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button("更改…") { model.chooseDirectory { model.outputDirectory = $0 } }
+                            .modifier(AdaptiveGlassButton())
+                    }
+                    .font(.subheadline)
+                    .padding(.horizontal, 12)
+                }
+
+                if model.hasStartedTask {
+                    HomeTaskStatusPanel()
+                } else {
+                    Button("开始解密", systemImage: "lock.open.fill") {
+                        model.startAutomaticDecrypt()
+                    }
+                    .modifier(AdaptiveGlassButton(prominent: true))
+                    .controlSize(.large)
+                    .disabled(model.automaticInputItems.isEmpty)
+                    .keyboardShortcut(.return, modifiers: [.command])
+                }
+
+            }
+            .frame(maxWidth: 500, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 24)
+        }
+    }
+}
+
+struct HomeTaskStatusPanel: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if model.isRunning {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: statusSymbol)
+                    .font(.title3)
+                    .foregroundStyle(statusColor)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.statusText)
+                    .font(.headline)
+                Text(model.taskStatusDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 8)
+            if model.isRunning {
+                Button("停止", systemImage: "stop.fill", role: .destructive) { model.stop() }
+                    .modifier(AdaptiveGlassButton())
+            } else {
+                Button("再次解密", systemImage: "arrow.clockwise") { model.startAutomaticDecrypt() }
+                    .modifier(AdaptiveGlassButton(prominent: true))
+            }
+        }
+        .padding(12)
+        .modifier(GlassPanel(cornerRadius: 16))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("当前解密状态：\(model.statusText)")
+    }
+
+    private var statusSymbol: String {
+        if model.statusText.contains("失败") { return "xmark.circle.fill" }
+        if model.statusText.contains("完成") { return "checkmark.circle.fill" }
+        return "stop.circle.fill"
+    }
+
+    private var statusColor: Color {
+        if model.statusText.contains("失败") { return .red }
+        if model.statusText.contains("完成") { return .green }
+        return .secondary
+    }
+}
+
+struct AutomaticDropZone: View {
+    @EnvironmentObject private var model: AppModel
+    @AppStorage("didCompleteFullDiskAccessGuide") private var didCompletePermissionGuide = false
+    @State private var isTargeted = false
+
+    var body: some View {
+        Group {
+            if !model.automaticInputItems.isEmpty {
+                VStack(spacing: 8) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(Color.green)
+                            .symbolEffect(.bounce, value: model.automaticInputItems.count)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("已添加 \(model.automaticInputItems.count) 个项目")
+                                .font(.headline)
+                            Text("共 \(model.detectedFileCount) 个可解密文件")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if model.hasQQAutomaticInput {
+                            Button("授权…", systemImage: "hand.raised") { presentFullDiskAccessGuide() }
+                                .modifier(AdaptiveGlassButton(prominent: true))
+                        }
+                        Button("继续添加…", systemImage: "plus") { model.chooseAutomaticInput() }
+                            .modifier(AdaptiveGlassButton())
+                    }
+
+                    ScrollView {
+                        LazyVStack(spacing: 5) {
+                            ForEach(model.automaticInputItems) { item in
+                                HStack(spacing: 8) {
+                                    Image(systemName: item.platform.symbol)
+                                        .foregroundStyle(Color.accentColor)
+                                        .frame(width: 18)
+                                    Text(item.displayName)
+                                        .font(.caption.weight(.medium))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Text(item.platform.title)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text("\(item.fileCount) 个")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    Button("移除", systemImage: "xmark.circle.fill") {
+                                        model.removeAutomaticInput(item)
+                                    }
+                                    .labelStyle(.iconOnly)
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(.secondary)
+                                    .disabled(model.isRunning)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 80)
+                }
+            } else {
+                VStack(spacing: 9) {
+                    Image(systemName: "arrow.down.document")
+                        .font(.system(size: 34, weight: .light))
+                        .foregroundStyle(Color.accentColor)
+                    Text(isTargeted ? "松开即可批量添加" : "拖入多个文件或文件夹")
+                        .font(.headline)
+                    Text("QQ · 酷我 · 酷狗 · 网易云")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("选择…") { model.chooseAutomaticInput() }
+                        .modifier(AdaptiveGlassButton())
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 120)
+        .padding(14)
+        .background(isTargeted ? Color.accentColor.opacity(0.12) : Color.clear)
+        .modifier(GlassPanel(cornerRadius: 20))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(
+                    isTargeted ? Color.accentColor : Color.secondary.opacity(0.28),
+                    style: StrokeStyle(lineWidth: isTargeted ? 2 : 1, dash: [8, 6])
+                )
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            model.acceptAutomaticInputs(urls)
+        } isTargeted: { isTargeted = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("音乐文件拖放区域")
+        .onChange(of: model.hasQQAutomaticInput) { _, hasQQ in
+            if hasQQ, !didCompletePermissionGuide {
+                didCompletePermissionGuide = true
+                presentFullDiskAccessGuide()
+            }
+        }
+    }
+}
+
+struct BatchTranscodeSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var advancedOptionsExpanded = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    Text("批量转码").font(.largeTitle.bold())
+                    Text("这是次要工具；日常解密只需返回主窗口拖入文件。")
+                        .foregroundStyle(.secondary)
+                    TranscodeWorkflow(advancedOptionsExpanded: $advancedOptionsExpanded)
+                }
+                .padding(28)
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if model.isRunning {
+                        Button("停止", role: .destructive) { model.stop() }
                     } else {
-                        TranscodeWorkflow(advancedOptionsExpanded: $advancedOptionsExpanded)
+                        Button("开始转码", systemImage: "play.fill") { model.startTranscode() }
+                            .disabled(model.transcodeInput.isEmpty)
                     }
                 }
-                .padding(.horizontal, 30)
-                .padding(.top, 30)
-                .padding(.bottom, 112)
-                .frame(maxWidth: 980, alignment: .leading)
             }
-            ActionBar(
-                readyToRun: readyToRun,
-                missingInputMessage: model.taskKind == .decrypt
-                    ? "选择一个音乐文件或包含音乐的目录后即可开始。"
-                    : "选择需要批量转码的目录后即可开始。"
-            )
-            .padding(.horizontal, 22)
-            .padding(.bottom, 18)
         }
+        .frame(width: 640, height: 480)
+    }
+}
+
+@MainActor
+private func presentFullDiskAccessGuide() {
+    FullDiskAccessPermissionFlow.shared.present()
+}
+
+@MainActor
+private final class FullDiskAccessPermissionFlow {
+    static let shared = FullDiskAccessPermissionFlow()
+
+    private let controller = PermissionFlowController(
+        configuration: PermissionFlowConfiguration(localeIdentifier: "zh-Hans")
+    )
+
+    private init() {}
+
+    func present() {
+        // FullDiskAccess performs a real TCC-protected directory probe. On
+        // macOS 10.15+ this registers the current signed app in the Full Disk
+        // Access service before PermissionFlow presents its native drag card.
+        _ = FullDiskAccess.isGranted
+
+        let mouse = NSEvent.mouseLocation
+        controller.authorize(
+            pane: .fullDiskAccess,
+            suggestedAppURLs: [Bundle.main.bundleURL],
+            sourceFrameInScreen: CGRect(x: mouse.x - 16, y: mouse.y - 16, width: 32, height: 32)
+        )
     }
 }
 
@@ -361,6 +591,16 @@ struct SettingsView: View {
                 Toggle("解密成功后进行转码", isOn: $model.transcodeEnabled)
                 Toggle("自动补充封面", isOn: $model.embedCover)
                 Toggle("补充专辑信息", isOn: $model.supplementAlbum)
+            }
+            Section("QQ 音乐权限") {
+                LabeledContent("完全磁盘访问权限") {
+                    Button("打开授权引导…", systemImage: "hand.raised") {
+                        presentFullDiskAccessGuide()
+                    }
+                }
+                Text("仅 musicex 文件需要读取 QQ 音乐客户端的登录信息；普通 QTag/V1 文件仍可离线处理。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
             Section {
                 HStack {
